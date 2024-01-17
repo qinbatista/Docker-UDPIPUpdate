@@ -14,6 +14,8 @@ RUN aws configure set aws_access_key_id ${AWS_KEY}
 RUN aws configure set aws_secret_access_key ${AWS_SECRET}
 RUN aws configure set default.region us-west-2
 RUN aws configure set region us-west-2 --profile testing
+
+RUN apk add curl
 #[End] CNListener--------------------------------------------------
 
 WORKDIR /

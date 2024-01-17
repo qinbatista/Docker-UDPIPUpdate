@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-from ast import While
 import os
-import requests
+import subprocess
 import time
 import threading
 from socket import *
@@ -16,7 +15,7 @@ class CNListener:
         self.__CN_timezone = pytz.timezone("Asia/Shanghai")
         self.__current_ip_from_udp = ""
         self.__udpServer = socket(AF_INET, SOCK_DGRAM)
-        self.__file_path = "/ssrfargate.txt"
+        self.__file_path = "/cnlistener.txt"
         self.__is_connect = ""
         self.__the_ip = ""
         self.__inaccessible_count = 0
@@ -32,8 +31,11 @@ class CNListener:
 
     def __post_client_to_google_DNS(self, client_ip, client_verify_key, client_domain_name):
         try:
-            requests.post(f"https://{client_verify_key}@domains.google.com/nic/update?hostname={client_domain_name}&myip={client_ip}")
-            self.__log(f"[client ddns] https://{client_verify_key}@domains.google.com/nic/update?hostname={client_domain_name}&myip={client_ip}")
+            ipv4_url = f"https://{client_verify_key}@domains.google.com/nic/update?hostname={client_domain_name}&myip={client_ip}"
+            ipv4_curl_command = f"curl '{ipv4_url}'"
+            ipv4_result = subprocess.run(ipv4_curl_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.__log(f"IPv4 POST CURL: {ipv4_url}")
+            self.__log(f"IPv4 POST Output: {ipv4_result.stdout}")
         except Exception as e:
             self.__log(f"_post_ip_address:{str(e)} self.__current_ip_from_udp={str(self.__current_ip_from_udp)}")
 
