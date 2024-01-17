@@ -45,8 +45,8 @@ class CNListener:
 
     def __listening_CN(self):
         try:
-            self.__udpServer = socket(AF_INET, SOCK_DGRAM)
             self.__udpServer.bind(("", 7171))
+            self.__log(f"Start UDP Server")
             while True:
                 data, addr = self.__udpServer.recvfrom(1024)
                 ip, port = addr
