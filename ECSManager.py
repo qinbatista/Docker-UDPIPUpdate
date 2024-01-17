@@ -5,12 +5,13 @@ import os
 import json
 from socket import *
 
+
 class ECSManager:
     def __init__(self):
         self.__file_path = "/ecs_manager_logs"
         self.__fn_stdout = f"./_get_static_ip_stdout{uuid.uuid4()}.json"
         self.__fn_tderr = f"./_get_static_ip_stderr{uuid.uuid4()}.json"
-        cluster_name = os.environ.get('CLUSTER_NAME')
+        cluster_name = "arn:aws:ecs:us-west-2:825807444916:cluster/SSR-Cluster"
         self.__cluster = cluster_name
         self.__service = f"{cluster_name}/FargetServer"
         self.__task_definition = "SSRFargate"
