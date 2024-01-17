@@ -4,8 +4,6 @@ import uuid
 import os
 import json
 from socket import *
-import platform
-
 
 class ECSManager:
     def __init__(self):
