@@ -22,9 +22,6 @@ class CNListener:
         self.__inaccessible_count = 0
 
     def __log(self, result):
-        # if os.path.isfile(self.__file_path)==False:
-        # with open(self.__file_path,"a+") as f:pass
-        # print("key:key"+str(len(content)))
         with open(self.__file_path, "a+") as f:
             f.write(f"{str(result)}\n")
         if os.path.getsize(self.__file_path) > 1024 * 512:
@@ -75,16 +72,13 @@ class CNListener:
             try:
                 self.__received_count = self.__received_count - 1
                 if self.__inaccessible_count >= 5 or self.__received_count <= -60*24:
-                    self.__shutdown_current_ip()
+                    em = ECSManager()
+                    em._replace_fargate()
                     self.__received_count = 0
                     self.__inaccessible_count = 0
                 time.sleep(60)
             except Exception as e:
                 self.__log(f"{str(e)}")\
-
-    def __shutdown_current_ip(self):
-        em = ECSManager()
-        em._replace_fargate()
 
     def _running(self):
         while True:
