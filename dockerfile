@@ -23,8 +23,8 @@ WORKDIR /
 RUN apk add supervisor
 RUN echo "[supervisord]" > /etc/supervisord.conf \
     && echo "nodaemon=true" >> /etc/supervisord.conf \
-    && echo "[program:ssrf]" >> /etc/supervisord.conf \
-    && echo "command=python3 /SSRFargate.py" >> /etc/supervisord.conf \
+    && echo "[program:CNListener]" >> /etc/supervisord.conf \
+    && echo "command=python3 /CNListener.py" >> /etc/supervisord.conf \
 
 #7171 for CN server listenning
 EXPOSE 7171/udp
