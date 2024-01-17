@@ -67,7 +67,9 @@ class ECSManager:
                         --service {self.__service}\
                         --network-configuration awsvpcConfiguration=\{{subnets=[subnet-59acc072,subnet-3691656b,subnet-da313691,subnet-669e841f],securityGroups=[sg-01c1819cdc065a550],assignPublicIp=ENABLED\}}\
                         --task-definition {self.__task_definition}"
+        print(cli_command)
         result = self.__exec_aws_command(cli_command)
+        print(result)
         try:
             if len(result["failures"]) == 0:
                 self.__log(f"[_create_ssr_task] create task success")
@@ -94,7 +96,9 @@ class ECSManager:
         cli_command = f"aws ecs stop-task\
                         --cluster {self.__cluster}\
                         --task {arn}"
+        print(cli_command)
         result = self.__exec_aws_command(cli_command)
+        print(result)
         try:
             if result["taskArns"] != "":
                 self.__log(f"[_stop_task] list task success")
