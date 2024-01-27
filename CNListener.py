@@ -87,6 +87,7 @@ class CNListener:
             time.sleep(10)
 
 if __name__ == "__main__":
+    print("CNListener1.0")
     sf = CNListener()
     sf._thread_listening_CN()
     sf._thread_ip_holding()
