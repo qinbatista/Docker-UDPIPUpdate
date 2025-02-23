@@ -1,94 +1,182 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os
-import subprocess
-import time
-import threading
-from socket import *
+
+import os, time, threading, subprocess, pytz, requests
+from socket import socket, AF_INET, SOCK_DGRAM, AF_INET6
 from datetime import datetime
-import pytz
-from ECSManager import ECSManager
 
 
-class CNListener:
-    def __init__(self):
-        self.__received_count = 0
-        self.__CN_timezone = pytz.timezone("Asia/Shanghai")
-        self.__current_ip_from_udp = ""
-        self.__udpServer = socket(AF_INET, SOCK_DGRAM)
-        self.__file_path = "/cnlistener.txt"
-        self.__is_connect = ""
-        self.__the_ip = ""
-        self.__inaccessible_count = 0
+class UDPServer:
+    def __init__(self, port=7171, log_file=None):
+        self.port = port
+        self.server_socket = socket(AF_INET, SOCK_DGRAM)
+        if not log_file:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            log_file = os.path.join(script_dir, "udp_server.log")
+        self.log_file = log_file
+        self.timezone = pytz.timezone("Asia/Shanghai")
+        self.lambda_url = os.environ.get("IPV4_DOMAIN_UPDATE_LAMBDA", "")
+        if not self.lambda_url:
+            self.log("IPV4_DOMAIN_UPDATE_LAMBDA not set.")
+        self.running = True
+        self._ipv4_services = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]
+        self._ipv6_services = ["https://api6.ipify.org", "https://ifconfig.co/ip", "https://ipv6.icanhazip.com", "https://ip6.seeip.org"]
+        self.log(f"Initial IPv4={self.get_ipv4()}, Initial IPv6={self.get_ipv6()}")
 
-    def __log(self, result):
-        with open(self.__file_path, "a+") as f:
-            f.write(f"{str(result)}\n")
-        if os.path.getsize(self.__file_path) > 1024 * 512:
-            with open(self.__file_path, "r") as f:
-                content = f.readlines()
-                # print("content:"+str(len(content)))
-                os.remove(self.__file_path)
+    def log(self, msg):
+        ts = datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S")
+        with open(self.log_file, "a+") as f:
+            f.write(f"[{ts}] {msg}\n")
+        if os.path.getsize(self.log_file) > 1024 * 128:
+            os.remove(self.log_file)
 
-    def __post_client_to_google_DNS(self, client_ip, client_verify_key, client_domain_name):
+    def _request_ip(self, url):
         try:
-            ipv4_url = f"https://{client_verify_key}@domains.google.com/nic/update?hostname={client_domain_name}&myip={client_ip}"
-            ipv4_curl_command = f"curl '{ipv4_url}'"
-            ipv4_result = subprocess.run(ipv4_curl_command, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            self.__log(f"IPv4 POST CURL: {ipv4_url}")
-            self.__log(f"IPv4 POST Output: {ipv4_result.stdout}")
+            r = requests.get(url, timeout=5)
+            r.raise_for_status()
+            ip = r.text.strip()
+            if ip:
+                return ip
         except Exception as e:
-            self.__log(f"_post_ip_address:{str(e)} self.__current_ip_from_udp={str(self.__current_ip_from_udp)}")
+            self.log(f"[IP lookup] {url} failed: {e}")
+        return None
 
-    def _thread_listening_CN(self):
-        thread_refresh = threading.Thread(target=self.__listening_CN, name="t1", args=())
-        thread_refresh.start()
+    def _get_public_ip(self, services):
+        for url in services:
+            ip = self._request_ip(url)
+            if ip:
+                return ip
+        return None
 
-    def __listening_CN(self):
+    def get_public_ipv4(self):
+        return self._get_public_ip(self._ipv4_services)
+
+    def get_public_ipv6(self):
+        return self._get_public_ip(self._ipv6_services)
+
+    def get_local_ipv4(self):
         try:
-            self.__udpServer.bind(("", 7171))
-            self.__log(f"Start UDP Server")
-            while True:
-                data, addr = self.__udpServer.recvfrom(1024)
-                ip, port = addr
-                message = data.decode(encoding="utf-8").split(",")
-                if len(message) == 2:
-                    self.__current_ip_from_udp = message[0]
-                    self.__is_connect = message[1]
-                    if self.__is_connect == "1":
-                        self.__inaccessible_count = 0
-                    else:
-                        self.__inaccessible_count += 1
-                else:
-                    self.__current_ip_from_udp = message
-                self.__log(f"{str(datetime.now(self.__CN_timezone))} Server IP:{self.__the_ip} self.__inaccessible_count:{self.__inaccessible_count} 60*24 mins restart :{self.__received_count} client message IP={self.__current_ip_from_udp} from:{ip}:{port}")
-                self.__post_client_to_google_DNS(ip, message[2], message[3])
+            s = socket(AF_INET, SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
         except Exception as e:
-            self.__log(f"{str(e)}")
+            self.log(f"[local_ipv4] Error: {e}")
+        return "0.0.0.0"
 
-    def _thread_ip_holding(self):
-        thread_refresh = threading.Thread(target=self.__ip_holding, name="t1", args=())
-        thread_refresh.start()
+    def get_local_ipv6(self):
+        try:
+            s = socket(AF_INET6, SOCK_DGRAM)
+            s.connect(("2001:4860:4860::8888", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception as e:
+            self.log(f"[local_ipv6] Error: {e}")
+        return "::"
 
-    def __ip_holding(self):
-        while True:
+    def get_ipv4(self):
+        return self.get_public_ipv4() or self.get_local_ipv4()
+
+    def get_ipv6(self):
+        return self.get_public_ipv6() or self.get_local_ipv6()
+
+    def replace_instance_ip(self):
+        self.log("Ping failed. Replacing instance IP...")
+        try:
+            subprocess.run("python replace_ip.py", shell=True, check=True)
+            self.log("Replacement script executed successfully.")
+        except Exception as e:
+            self.log(f"Error replacing instance IP: {e}")
+
+    def update_client_ip_via_lambda(self, client_ip, connectivity, domain_name=None):
+        # If domain_name is not provided, use SERVERDOMAIN from env.
+        if domain_name is None:
+            domain_name = os.environ.get("SERVERDOMAIN", "")
+        try:
+            payload = {"client_ip": client_ip, "connectivity": connectivity, "domain_name": domain_name}
+            response = requests.post(self.lambda_url, json=payload, timeout=10)
+            self.log(f"Lambda update response: {response.text}")
+        except Exception as e:
+            self.log(f"Error calling lambda: {e}")
+
+    def restart_udp_server(self):
+        self.log("Restarting UDP server...")
+        self.running = False
+        try:
+            self.server_socket.close()
+        except Exception as e:
+            self.log(f"Error closing socket: {e}")
+        time.sleep(2)
+        self.server_socket = socket(AF_INET, SOCK_DGRAM)
+        self.running = True
+        self.start_receive_thread()
+        self.log("UDP server restarted.")
+
+    def receive_loop(self):
+        try:
+            self.server_socket.bind(("", self.port))
+            self.log(f"UDP server started on port {self.port}.")
+        except Exception as e:
+            self.log(f"Failed to bind on port {self.port}: {e}")
+            return
+        while self.running:
             try:
-                self.__received_count = self.__received_count - 1
-                if self.__inaccessible_count >= 10 or self.__received_count <= -60*24*2:
-                    em = ECSManager()
-                    em._replace_fargate()
-                    self.__received_count = 0
-                    self.__inaccessible_count = 0
-                time.sleep(60)
+                data, addr = self.server_socket.recvfrom(1024)
+                sender_ip, sender_port = addr
+                msg = data.decode("utf-8").strip().split(",")
+                self.log(f"Received from {sender_ip}:{sender_port} -> {msg}")
+                if len(msg) >= 2:
+                    reported_ip, connectivity = msg[0], msg[1]
+                    # Use the third parameter if provided; otherwise, use the reported IP.
+                    domain_name = msg[2] if len(msg) >= 3 else reported_ip
+                    self.update_client_ip_via_lambda(reported_ip, connectivity, domain_name=domain_name)
+                    if connectivity == "0":
+                        self.replace_instance_ip()
+                else:
+                    self.log(f"Invalid message format: {msg}")
             except Exception as e:
-                self.__log(f"{str(e)}")\
+                self.log(f"Error handling message: {e}")
+                time.sleep(1)
 
-    def _running(self):
+    def start_receive_thread(self):
+        t = threading.Thread(target=self.receive_loop, name="UDPServerThread")
+        t.daemon = True
+        t.start()
+        self.log("UDP server receive thread started.")
+        return t
+
+    def ip_monitor_loop(self):
+        last_ip = None
         while True:
-            time.sleep(10)
+            current_ip = self.get_ipv4()
+            if current_ip:
+                if not last_ip:
+                    last_ip = current_ip
+                    self.log(f"Initial public IP: {current_ip}")
+                elif current_ip != last_ip:
+                    self.log(f"Public IP changed from {last_ip} to {current_ip}.")
+                    # For local updates, use domain name from SERVERDOMAIN.
+                    self.update_client_ip_via_lambda(current_ip, "1")
+                    self.restart_udp_server()
+                    last_ip = current_ip
+            time.sleep(60)
+
+    def start_ip_monitor_thread(self):
+        t = threading.Thread(target=self.ip_monitor_loop, name="IPMonitorThread")
+        t.daemon = True
+        t.start()
+        self.log("IP monitor thread started.")
+        return t
+
+    def start(self):
+        self.start_receive_thread()
+        self.start_ip_monitor_thread()
+
 
 if __name__ == "__main__":
-    print("CNListener1.0")
-    sf = CNListener()
-    sf._thread_listening_CN()
-    sf._thread_ip_holding()
-    sf._running()
+    server = UDPServer()
+    server.start()
+    while True:
+        time.sleep(1)

@@ -121,3 +121,5 @@ if __name__ == "__main__":
     ddns_client = UDPClient(client_domain_name, server_domain_name)
     threading.Thread(target=ddns_client.ping_server, daemon=True).start()
     threading.Thread(target=ddns_client.update_server, daemon=True).start()
+    while True:
+        time.sleep(1)
