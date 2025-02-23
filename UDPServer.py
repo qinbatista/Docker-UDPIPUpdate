@@ -157,7 +157,7 @@ class UDPServer:
                 elif current_ip != last_ip:
                     self.log(f"Public IP changed from {last_ip} to {current_ip}.")
                     # For local updates, use domain name from SERVERDOMAIN.
-                    self.update_client_ip_via_lambda(current_ip, "1", domain_name=os.environ.get("SERVERDOMAIN", "127.0.0.1"))
+                    self.update_client_ip_via_lambda(current_ip, "1", domain_name=os.environ.get("SERVER_DOMAIN_NAME", "127.0.0.1"))
                     self.restart_udp_server()
                     last_ip = current_ip
             time.sleep(60)
