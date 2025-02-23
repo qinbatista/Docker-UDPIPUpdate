@@ -3,98 +3,121 @@ import time
 import requests
 import threading
 import subprocess
-from socket import *
+from socket import socket, AF_INET, SOCK_DGRAM, AF_INET6
 from datetime import datetime
 
 
-class DDNSClient:
+class UDPClient:
     def __init__(self, client_domain_name, server_domain_name):
         self._my_domain = client_domain_name
-        self.__target_server_v4 = server_domain_name
-        self.__target_server_v6 = server_domain_name
-        self.__file_path = "/ipreporter.txt"
-
-        # Websites to fetch the current IP addresses
-        self._get_ipv4_website = "https://checkip.amazonaws.com"
-        self._get_ipv6_website = "https://api6.ipify.org"
-
-        # 0 means not reachable, 1 means reachable.
+        self._target_server = server_domain_name
+        self._log_file = "/ipreporter.txt"
         self._can_connect = 0
 
+        # Lists of services to get public IPs
+        self._ipv4_services = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]
+        self._ipv6_services = ["https://api6.ipify.org", "https://ifconfig.co/ip", "https://ipv6.icanhazip.com", "https://ip6.seeip.org"]
+
         self.__log(f"client_domain_name={client_domain_name}, server_domain_name={server_domain_name}")
-        self.__log(f"this_docker_ipv4={self.__get_current_ipv4()}, this_docker_ipv6={self.__get_current_ipv6()}")
+        self.__log(f"Initial IPv4={self.get_ipv4()}, Initial IPv6={self.get_ipv6()}")
 
-    def _ping_server_thread(self):
-        thread_refresh = threading.Thread(target=self.__ping_server, name="t1")
-        thread_refresh.start()
+    def __log(self, message):
+        with open(self._log_file, "a+") as f:
+            f.write(message + "\n")
+        if os.path.getsize(self._log_file) > 1024 * 128:
+            os.remove(self._log_file)
 
-    def __ping_server(self):
-        while True:
-            try:
-                # Ping the target server
-                process = subprocess.Popen(f"ping -c 1 {self.__target_server_v4}", stdout=subprocess.PIPE, universal_newlines=True, shell=True)
-                process.wait()
-
-                # Update connectivity status based on the ping result
-                self._can_connect = 1 if process.returncode == 0 else 0
-
-                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping_server] ping -c 1 {self.__target_server_v4} reachable={self._can_connect}")
-
-                # Wait for 1 minute before the next ping
-                time.sleep(60)
-            except Exception as e:
-                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping_server] Error: {str(e)}")
-                time.sleep(60)
-
-    def _update_this_server_thread(self):
-        thread_refresh = threading.Thread(target=self.__update_this_server, name="t1")
-        thread_refresh.start()
-
-    def __update_this_server(self):
-        udpClient = socket(AF_INET, SOCK_DGRAM)
-        while True:
-            try:
-                # Get the current IPv4 of the client
-                this_docker_ipv4 = self.__get_current_ipv4()
-                # Prepare the UDP message with client domain name, current IP, and ping result.
-                message = f"{self._my_domain},{this_docker_ipv4},{self._can_connect}"
-                udpClient.sendto(message.encode("utf-8"), (self.__target_server_v4, 7171))
-                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update_this_server] Sent message to {self.__target_server_v4}: {message}")
-                time.sleep(60)
-            except Exception as e:
-                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update_this_server] Error: {str(e)}")
-                time.sleep(60)
-
-    def __log(self, result):
-        with open(self.__file_path, "a+") as f:
-            f.write(result + "\n")
-        # If the log file exceeds 128 KB, clear it.
-        if os.path.getsize(self.__file_path) > 1024 * 128:
-            os.remove(self.__file_path)
-
-    def __get_current_ipv6(self):
+    def _request_ip(self, url):
         try:
-            response = requests.get(self._get_ipv6_website, timeout=5)
-            response.raise_for_status()
-            return response.text.strip()
-        except requests.exceptions.RequestException as err:
-            self.__log(f"[get_current_ipv6] Request Exception: {err}")
+            r = requests.get(url, timeout=5)
+            r.raise_for_status()
+            ip = r.text.strip()
+            if ip:
+                return ip
+        except Exception as e:
+            self.__log(f"[IP lookup] {url} failed: {e}")
         return None
 
-    def __get_current_ipv4(self):
+    def get_public_ipv4(self):
+        for url in self._ipv4_services:
+            ip = self._request_ip(url)
+            if ip:
+                return ip
+        return None
+
+    def get_public_ipv6(self):
+        for url in self._ipv6_services:
+            ip = self._request_ip(url)
+            if ip:
+                return ip
+        return None
+
+    def get_local_ipv4(self):
+        # Use a UDP socket to determine the local IPv4 (does not send data)
         try:
-            response = requests.get(self._get_ipv4_website, timeout=5)
-            response.raise_for_status()
-            return response.text.strip()
-        except requests.exceptions.RequestException as err:
-            self.__log(f"[get_current_ipv4] Request Exception: {err}")
-        return ""
+            s = socket(AF_INET, SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception as e:
+            self.__log(f"[local_ipv4] Error: {e}")
+        return "0.0.0.0"
+
+    def get_local_ipv6(self):
+        # Use a UDP socket to determine the local IPv6 address (if available)
+        try:
+            s = socket(AF_INET6, SOCK_DGRAM)
+            # Google's public IPv6 DNS server
+            s.connect(("2001:4860:4860::8888", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception as e:
+            self.__log(f"[local_ipv6] Error: {e}")
+        return "::"
+
+    def get_ipv4(self):
+        # Try public lookup first, then fallback to local interface
+        ip = self.get_public_ipv4()
+        return ip if ip else self.get_local_ipv4()
+
+    def get_ipv6(self):
+        ip = self.get_public_ipv6()
+        return ip if ip else self.get_local_ipv6()
+
+    def ping_server(self):
+        while True:
+            try:
+                proc = subprocess.Popen(f"ping -c 1 {self._target_server}", stdout=subprocess.PIPE, universal_newlines=True, shell=True)
+                proc.wait()
+                self._can_connect = 1 if proc.returncode == 0 else 0
+                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] {self._target_server} reachable={self._can_connect}")
+            except Exception as e:
+                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] Error: {e}")
+            time.sleep(60)
+
+    def update_server(self):
+        udp_client = socket(AF_INET, SOCK_DGRAM)
+        while True:
+            try:
+                ip4 = self.get_ipv4()
+                ip6 = self.get_ipv6()
+                message_v4 = f"{self._my_domain},v4,{ip4},{self._can_connect}"
+                message_v6 = f"{self._my_domain},v6,{ip6},{self._can_connect}"
+                udp_client.sendto(message_v4.encode("utf-8"), (self._target_server, 7171))
+                udp_client.sendto(message_v6.encode("utf-8"), (self._target_server, 7171))
+                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Sent IPv4: {message_v4}")
+                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Sent IPv6: {message_v6}")
+            except Exception as e:
+                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Error: {e}")
+            time.sleep(60)
 
 
 if __name__ == "__main__":
     client_domain_name = os.environ["CLIENT_DOMAIN_NAME"]
     server_domain_name = os.environ["SERVER_DOMAIN_NAME"]
 
-    ddns_client = DDNSClient(client_domain_name, server_domain_name)
-    ddns_client._ping_server_thread()
-    ddns_client._update_this_server_thread()
+    ddns_client = UDPClient(client_domain_name, server_domain_name)
+    threading.Thread(target=ddns_client.ping_server, daemon=True).start()
+    threading.Thread(target=ddns_client.update_server, daemon=True).start()
