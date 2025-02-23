@@ -1,6 +1,1 @@
-# Start command
-listen UDP message from CN
-```
-docker pull qinbatista/cnlistener&&docker run -itd -p 7171:7171/udp --restart=always qinbatista/cnlistener
-```
-# Docker-PingList
+docker rm -f udpserver && docker pull qinbatista/udpserver && docker run -d --name udpserver -p 7171:7171/udp qinbatista/udpserver

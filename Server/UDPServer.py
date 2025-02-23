@@ -127,12 +127,18 @@ class UDPServer:
                 # Expecting message format: domain, protocol, reported_ip, connectivity
                 if len(msg) >= 4:
                     domain_name = msg[0]
-                    protocol = msg[1]  # e.g., "v4" or "v6"
+                    protocol = msg[1].lower()  # e.g., "v4" or "v6"
                     reported_ip = msg[2]
                     connectivity = msg[3]
-                    self.update_client_ip_via_lambda(reported_ip, connectivity, domain_name=domain_name)
-                    if connectivity == "0":
-                        self.replace_instance_ip()
+                    match protocol:
+                        case "v4":
+                            self.update_client_ip_via_lambda(reported_ip, connectivity, domain_name=domain_name)
+                            if connectivity == "0":
+                                self.replace_instance_ip()
+                        case "v6":
+                            self.log("Protocol 'v6' ignored.")
+                        case _:
+                            self.log(f"Unknown protocol: {protocol}")
                 else:
                     self.log(f"Invalid message format: {msg}")
             except Exception as e:
@@ -157,7 +163,7 @@ class UDPServer:
                 elif current_ip != last_ip:
                     self.log(f"Public IP changed from {last_ip} to {current_ip}.")
                     # For local updates, use domain name from SERVERDOMAIN.
-                    self.update_client_ip_via_lambda(current_ip, "1", domain_name=os.environ.get("SERVER_DOMAIN_NAME", "127.0.0.1"))
+                    self.update_client_ip_via_lambda(current_ip, "1", domain_name=os.environ.get("SERVER_DOMAIN_NAME", ""))
                     self.restart_udp_server()
                     last_ip = current_ip
             time.sleep(60)
