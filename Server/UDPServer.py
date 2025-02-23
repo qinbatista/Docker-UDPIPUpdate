@@ -164,17 +164,6 @@ class UDPServer:
                         self.log(f"Public IP changed from {last_ip} to {current_ip}.")
                     # Update Lambda using domain from SERVER_DOMAIN_NAME env var
                     self.update_client_ip_via_lambda(current_ip, "1", domain_name=os.environ.get("SERVER_DOMAIN_NAME", ""))
-                    # Reinitialize the UDP socket: close the old socket and create a new one
-                    try:
-                        self.server_socket.close()
-                    except Exception as e:
-                        self.log(f"Error closing UDP socket: {e}")
-                    self.server_socket = socket(AF_INET, SOCK_DGRAM)
-                    try:
-                        self.server_socket.bind(("", self.port))
-                        self.log(f"UDP server reinitialized on port {self.port}.")
-                    except Exception as e:
-                        self.log(f"Error binding UDP server on port {self.port}: {e}")
                     last_ip = current_ip
             time.sleep(60)
 
