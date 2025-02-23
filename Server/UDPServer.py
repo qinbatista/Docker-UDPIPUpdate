@@ -130,15 +130,14 @@ class UDPServer:
                     protocol = msg[1].lower()  # e.g., "v4" or "v6"
                     reported_ip = msg[2]
                     connectivity = msg[3]
-                    match protocol:
-                        case "v4":
-                            self.update_client_ip_via_lambda(reported_ip, connectivity, domain_name=domain_name)
-                            if connectivity == "0":
-                                self.replace_instance_ip()
-                        case "v6":
-                            self.log("Protocol 'v6' ignored.")
-                        case _:
-                            self.log(f"Unknown protocol: {protocol}")
+                    if protocol == "v4":
+                        self.update_client_ip_via_lambda(reported_ip, connectivity, domain_name=domain_name)
+                        if connectivity == "0":
+                            self.replace_instance_ip()
+                    elif protocol == "v6":
+                        self.log("Protocol 'v6' ignored.")
+                    else:
+                        self.log(f"Unknown protocol: {protocol}")
                 else:
                     self.log(f"Invalid message format: {msg}")
             except Exception as e:
