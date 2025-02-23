@@ -1,4 +1,4 @@
-FROM python:3.8.13-alpine3.16 as python
+FROM python:3.8.13-alpine3.16
 
 # -------------------
 # Build arguments
@@ -8,38 +8,48 @@ ARG AWS_SECRET
 ARG IPV4_DOMAIN_UPDATE_LAMBDA
 ARG SERVER_DOMAIN_NAME
 
-# Copy the codebase
-COPY . /
+# -------------------
+# Environment variables
+# -------------------
+ENV IPV4_DOMAIN_UPDATE_LAMBDA=${IPV4_DOMAIN_UPDATE_LAMBDA} \
+    SERVER_DOMAIN_NAME=${SERVER_DOMAIN_NAME}
 
 # -------------------
-# Environment variables for Python
+# Set working directory and copy code
 # -------------------
-ENV IPV4_DOMAIN_UPDATE_LAMBDA=${IPV4_DOMAIN_UPDATE_LAMBDA}
-ENV SERVER_DOMAIN_NAME=${SERVER_DOMAIN_NAME}
+WORKDIR /app
+COPY . /app
 
-# Install dependencies and upgrade pip
-RUN pip3 install --upgrade pip
-RUN pip3 install -r requirements.txt
+# -------------------
+# Install Python dependencies
+# -------------------
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
 
-# Install and configure AWS CLI
-RUN apk add --no-cache aws-cli
-RUN aws configure set aws_access_key_id "${AWS_KEY}" \
-    && aws configure set aws_secret_access_key "${AWS_SECRET}" \
-    && aws configure set default.region us-west-2 \
-    && aws configure set region us-west-2 --profile testing
+# -------------------
+# Install additional packages: AWS CLI, curl, and supervisor
+# -------------------
+RUN apk add --no-cache aws-cli curl supervisor
 
-# Install additional packages
-RUN apk add --no-cache curl supervisor
+# -------------------
+# Configure AWS CLI with provided credentials
+# -------------------
+RUN aws configure set aws_access_key_id "${AWS_KEY}" && \
+    aws configure set aws_secret_access_key "${AWS_SECRET}" && \
+    aws configure set default.region us-west-2 && \
+    aws configure set region us-west-2 --profile testing
 
-WORKDIR /
+# -------------------
+# Configure Supervisor to run UDPServer.py
+# -------------------
+RUN echo "[supervisord]" > /etc/supervisord.conf && \
+    echo "nodaemon=true" >> /etc/supervisord.conf && \
+    echo "[program:UDPServer]" >> /etc/supervisord.conf && \
+    echo "command=python3 /app/UDPServer.py" >> /etc/supervisord.conf
 
-# Configure supervisord to run UDPServer.py
-RUN echo "[supervisord]" > /etc/supervisord.conf \
-    && echo "nodaemon=true" >> /etc/supervisord.conf \
-    && echo "[program:UDPServer]" >> /etc/supervisord.conf \
-    && echo "command=python3 /UDPServer.py" >> /etc/supervisord.conf
-
-# Expose UDP port 7171 for the server
+# -------------------
+# Expose UDP port 7171
+# -------------------
 EXPOSE 7171/udp
 
 CMD ["supervisord", "-c", "/etc/supervisord.conf"]
