@@ -7,8 +7,6 @@ RUN pip3 install --upgrade pip
 RUN pip3 install -r requirements.txt
 ARG AWS_KEY
 ARG AWS_SECRET
-ARG CLUSTER_NAME
-ENV CLUSTER_NAME=${CLUSTER_NAME}
 
 RUN apk add aws-cli
 RUN aws configure set aws_access_key_id ${AWS_KEY}

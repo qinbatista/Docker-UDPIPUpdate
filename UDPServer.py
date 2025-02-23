@@ -73,7 +73,7 @@ class CNListener:
         while True:
             try:
                 self.__received_count = self.__received_count - 1
-                if self.__inaccessible_count >= 5 or self.__received_count <= -60*24:
+                if self.__inaccessible_count >= 10 or self.__received_count <= -60*24*2:
                     em = ECSManager()
                     em._replace_fargate()
                     self.__received_count = 0
@@ -87,6 +87,7 @@ class CNListener:
             time.sleep(10)
 
 if __name__ == "__main__":
+    print("CNListener1.0")
     sf = CNListener()
     sf._thread_listening_CN()
     sf._thread_ip_holding()
