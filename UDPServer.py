@@ -91,9 +91,6 @@ class UDPServer:
             self.log(f"Error replacing instance IP: {e}")
 
     def update_client_ip_via_lambda(self, client_ip, connectivity, domain_name=None):
-        # If domain_name is not provided, use SERVERDOMAIN from env.
-        if domain_name is None:
-            domain_name = os.environ.get("SERVERDOMAIN", "")
         try:
             payload = {"client_ip": client_ip, "connectivity": connectivity, "domain_name": domain_name}
             response = requests.post(self.lambda_url, json=payload, timeout=10)
@@ -127,10 +124,12 @@ class UDPServer:
                 sender_ip, sender_port = addr
                 msg = data.decode("utf-8").strip().split(",")
                 self.log(f"Received from {sender_ip}:{sender_port} -> {msg}")
-                if len(msg) >= 2:
-                    reported_ip, connectivity = msg[0], msg[1]
-                    # Use the third parameter if provided; otherwise, use the reported IP.
-                    domain_name = msg[2] if len(msg) >= 3 else reported_ip
+                # Expecting message format: domain, protocol, reported_ip, connectivity
+                if len(msg) >= 4:
+                    domain_name = msg[0]
+                    protocol = msg[1]  # e.g., "v4" or "v6"
+                    reported_ip = msg[2]
+                    connectivity = msg[3]
                     self.update_client_ip_via_lambda(reported_ip, connectivity, domain_name=domain_name)
                     if connectivity == "0":
                         self.replace_instance_ip()
@@ -158,7 +157,7 @@ class UDPServer:
                 elif current_ip != last_ip:
                     self.log(f"Public IP changed from {last_ip} to {current_ip}.")
                     # For local updates, use domain name from SERVERDOMAIN.
-                    self.update_client_ip_via_lambda(current_ip, "1")
+                    self.update_client_ip_via_lambda(current_ip, "1", domain_name=os.environ.get("SERVERDOMAIN", "127.0.0.1"))
                     self.restart_udp_server()
                     last_ip = current_ip
             time.sleep(60)

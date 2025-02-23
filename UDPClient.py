@@ -1,17 +1,20 @@
-import os
-import time
-import requests
-import threading
-import subprocess
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os, time, requests, threading, subprocess
 from socket import socket, AF_INET, SOCK_DGRAM, AF_INET6
 from datetime import datetime
 
 
 class UDPClient:
-    def __init__(self, client_domain_name, server_domain_name):
+    def __init__(self, client_domain_name, server_domain_name, log_file=None):
         self._my_domain = client_domain_name
         self._target_server = server_domain_name
-        self._log_file = "/ipreporter.txt"
+        # Place log file in the current script folder if not provided.
+        if log_file is None:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            log_file = os.path.join(script_dir, "udp_client.log")
+        self._log_file = log_file
         self._can_connect = 0
 
         # Lists of services to get public IPs
@@ -53,7 +56,6 @@ class UDPClient:
         return None
 
     def get_local_ipv4(self):
-        # Use a UDP socket to determine the local IPv4 (does not send data)
         try:
             s = socket(AF_INET, SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
@@ -65,10 +67,8 @@ class UDPClient:
         return "0.0.0.0"
 
     def get_local_ipv6(self):
-        # Use a UDP socket to determine the local IPv6 address (if available)
         try:
             s = socket(AF_INET6, SOCK_DGRAM)
-            # Google's public IPv6 DNS server
             s.connect(("2001:4860:4860::8888", 80))
             ip = s.getsockname()[0]
             s.close()
@@ -78,7 +78,6 @@ class UDPClient:
         return "::"
 
     def get_ipv4(self):
-        # Try public lookup first, then fallback to local interface
         ip = self.get_public_ipv4()
         return ip if ip else self.get_local_ipv4()
 
@@ -111,12 +110,12 @@ class UDPClient:
                 self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Sent IPv6: {message_v6}")
             except Exception as e:
                 self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Error: {e}")
-            time.sleep(60)
+            time.sleep(10)
 
 
 if __name__ == "__main__":
-    client_domain_name = os.environ["CLIENT_DOMAIN_NAME"]
-    server_domain_name = os.environ["SERVER_DOMAIN_NAME"]
+    client_domain_name = os.environ.get("CLIENT_DOMAIN_NAME", "")
+    server_domain_name = os.environ.get("SERVER_DOMAIN_NAME", "")
 
     ddns_client = UDPClient(client_domain_name, server_domain_name)
     threading.Thread(target=ddns_client.ping_server, daemon=True).start()
