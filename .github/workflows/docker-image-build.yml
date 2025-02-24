@@ -9,18 +9,25 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # This references the environment in your GitHub repository settings
     environment: BuildEnv
 
     steps:
       - uses: actions/checkout@v3
 
-      - name: Build the Docker image
+      - name: Build udpserver Docker image
         run: |
           docker build -t qinbatista/udpserver ./Server \
             --build-arg AWS_KEY="${{ secrets.AWS_KEY }}" \
             --build-arg AWS_SECRET="${{ secrets.AWS_ACCESS }}" \
             --build-arg IPV4_DOMAIN_UPDATE_LAMBDA="${{ vars.IPV4_DOMAIN_UPDATE_LAMBDA }}" \
+            --build-arg SERVER_DOMAIN_NAME="${{ vars.SERVER_DOMAIN_NAME }}"
+
+      - name: Build udpclient Docker image
+        run: |
+          docker build -t qinbatista/udpclient ./Client \
+            --build-arg AWS_KEY="${{ secrets.AWS_KEY }}" \
+            --build-arg AWS_SECRET="${{ secrets.AWS_ACCESS }}" \
+            --build-arg CLIENT_DOMAIN_NAME="${{ vars.CLIENT_DOMAIN_NAME }}" \
             --build-arg SERVER_DOMAIN_NAME="${{ vars.SERVER_DOMAIN_NAME }}"
 
       - name: Login to Docker Hub
@@ -29,5 +36,8 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Push
+      - name: Push udpserver Docker image
         run: docker push qinbatista/udpserver
+
+      - name: Push udpclient Docker image
+        run: docker push qinbatista/udpclient
