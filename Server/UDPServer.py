@@ -131,7 +131,7 @@ class UDPServer:
                     reported_ip = msg[2]
                     connectivity = msg[3]
                     if protocol == "v4":
-                        self.update_client_ip_via_lambda(reported_ip, connectivity, domain_name=domain_name)
+                        self.update_client_ip_via_lambda(sender_ip, connectivity, domain_name=domain_name)
                         if connectivity == "0":
                             self.replace_instance_ip()
                     elif protocol == "v6":
