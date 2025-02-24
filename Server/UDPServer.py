@@ -4,6 +4,7 @@
 import os, time, threading, subprocess, pytz, requests
 from socket import socket, AF_INET, SOCK_DGRAM, AF_INET6
 from datetime import datetime
+from LightSailManager import LightSail
 
 
 class UDPServer:
@@ -22,6 +23,7 @@ class UDPServer:
         self._ipv4_services = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]
         self._ipv6_services = ["https://api6.ipify.org", "https://ifconfig.co/ip", "https://ipv6.icanhazip.com", "https://ip6.seeip.org"]
         self.log(f"Initial IPv4={self.get_ipv4()}, Initial IPv6={self.get_ipv6()}")
+        self.__light_sail = LightSail()
 
     def log(self, msg):
         ts = datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S")
@@ -85,8 +87,7 @@ class UDPServer:
     def replace_instance_ip(self):
         self.log("Ping failed. Replacing instance IP...")
         try:
-            subprocess.run("python replace_ip.py", shell=True, check=True)
-            self.log("Replacement script executed successfully.")
+            self.__light_sail.replace_ip("ap-northeast-1a", "Debian-1")
         except Exception as e:
             self.log(f"Error replacing instance IP: {e}")
 
