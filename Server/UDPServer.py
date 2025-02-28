@@ -87,7 +87,7 @@ class UDPServer:
     def replace_instance_ip(self):
         self.log("Ping failed. Replacing instance IP...")
         try:
-            self.__light_sail.replace_ip("ap-northeast-1a", "Debian-1")
+            self.__light_sail.replace_ip("ap-northeast-1", "Debian-1")
         except Exception as e:
             self.log(f"Error replacing instance IP: {e}")
 
