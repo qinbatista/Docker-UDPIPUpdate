@@ -113,17 +113,22 @@ class UDPServer:
         self.log("UDP server restarted.")
 
     def receive_loop(self):
+        # Dictionary to store the start time of continuous "0" connectivity per domain
+        self.connectivity_0_start_time = {}
+
         try:
             self.server_socket.bind(("", self.port))
             self.log(f"UDP server started on port {self.port}.")
         except Exception as e:
             self.log(f"Failed to bind on port {self.port}: {e}")
             return
+
         while self.running:
             try:
                 data, addr = self.server_socket.recvfrom(1024)
                 sender_ip, sender_port = addr
                 msg = data.decode("utf-8").strip().split(",")
+
                 self.log(f"Received from {sender_ip}:{sender_port} -> {msg}")
                 # Expecting message format: domain, protocol, reported_ip, connectivity
                 if len(msg) >= 4:
@@ -131,16 +136,37 @@ class UDPServer:
                     protocol = msg[1].lower()  # e.g., "v4" or "v6"
                     reported_ip = msg[2]
                     connectivity = msg[3]
+
                     if protocol == "v4":
+                        # Update Lambda with the incoming IP/connection info
                         self.update_client_ip_via_lambda(sender_ip, connectivity, domain_name=domain_name)
+
                         if connectivity == "0":
-                            self.replace_instance_ip()
+                            # If we don't have a start time for this domain, set it
+                            if domain_name not in self.connectivity_0_start_time:
+                                self.connectivity_0_start_time[domain_name] = time.time()
+                            else:
+                                # Check if we've been continuously seeing "0" for >= 5 minutes
+                                elapsed = time.time() - self.connectivity_0_start_time[domain_name]
+                                if elapsed >= 300:
+                                    # Replace IP since we've been at 0 for 5+ minutes
+                                    self.replace_instance_ip()
+
+                                    # Reset start time so that if it remains 0 for another 5 minutes,
+                                    # we'll replace again.
+                                    self.connectivity_0_start_time[domain_name] = time.time()
+                        else:
+                            # Any connectivity != "0", reset or remove the timer
+                            if domain_name in self.connectivity_0_start_time:
+                                del self.connectivity_0_start_time[domain_name]
+
                     elif protocol == "v6":
                         self.log("Protocol 'v6' ignored.")
                     else:
                         self.log(f"Unknown protocol: {protocol}")
                 else:
                     self.log(f"Invalid message format: {msg}")
+
             except Exception as e:
                 self.log(f"Error handling message: {e}")
                 time.sleep(1)
