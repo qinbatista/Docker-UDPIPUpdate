@@ -137,4 +137,4 @@ class LightSail:
 
 if __name__ == "__main__":
     ls = LightSail()
-    ls.replace_ip("ap-northeast-1a", "Debian-1")
+    ls.replace_ip("ap-northeast-1", "Debian-1")
