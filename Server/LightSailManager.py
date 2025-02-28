@@ -39,7 +39,7 @@ class LightSail:
         return result
 
     def allocate_ip(self, region):
-        cmd = f"aws lightsail allocate-static-ip --static-ip-name {uuid.uuid4().hex} --region {region} --no-cli-pager"
+        cmd = f"aws lightsail allocate-static-ip --static-ip-name {uuid.uuid4().hex} --region {region}"
         result = self.exec_aws(cmd)
         if isinstance(result, dict):
             try:
@@ -54,7 +54,7 @@ class LightSail:
         return None
 
     def detach_ip(self, ip_name, region):
-        cmd = f"aws lightsail detach-static-ip --static-ip-name {ip_name} --region {region} --no-cli-pager"
+        cmd = f"aws lightsail detach-static-ip --static-ip-name {ip_name} --region {region}"
         result = self.exec_aws(cmd)
         if isinstance(result, dict):
             if result.get("operations", [{}])[0].get("status") == "Succeeded":
@@ -67,7 +67,7 @@ class LightSail:
         return False
 
     def release_ip(self, ip_name, region):
-        cmd = f"aws lightsail release-static-ip --static-ip-name {ip_name} --region {region} --no-cli-pager"
+        cmd = f"aws lightsail release-static-ip --static-ip-name {ip_name} --region {region}"
         result = self.exec_aws(cmd)
         if isinstance(result, dict):
             if result.get("operations", [{}])[0].get("status") == "Succeeded":
@@ -79,7 +79,7 @@ class LightSail:
         return False
 
     def get_unattached_ips(self, region):
-        cmd = f"aws lightsail get-static-ips --region {region} --no-cli-pager"
+        cmd = f"aws lightsail get-static-ips --region {region}"
         result = self.exec_aws(cmd)
         unattached = []
         if isinstance(result, dict):
@@ -92,7 +92,7 @@ class LightSail:
         return unattached
 
     def attach_ip(self, ip_name, region, server_name):
-        cmd = f"aws lightsail attach-static-ip --static-ip-name {ip_name} --instance-name {server_name} --region {region} --no-cli-pager"
+        cmd = f"aws lightsail attach-static-ip --static-ip-name {ip_name} --instance-name {server_name} --region {region}"
         result = self.exec_aws(cmd)
         if isinstance(result, dict):
             if result.get("operations", [{}])[0].get("status") == "Succeeded":
@@ -104,7 +104,7 @@ class LightSail:
         """Replace the instance IP by detaching and releasing any attached IP,
         then allocating and attaching a new IP."""
         self.log("Starting IP replacement")
-        cmd = f"aws lightsail get-static-ips --region {region} --no-cli-pager"
+        cmd = f"aws lightsail get-static-ips --region {region}"
         result = self.exec_aws(cmd)
         attached_ips = []
         if isinstance(result, dict):
