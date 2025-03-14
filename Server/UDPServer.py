@@ -95,7 +95,14 @@ class UDPServer:
         try:
             payload = {"client_ip": client_ip, "connectivity": connectivity, "domain_name": domain_name}
             response = requests.post(self.lambda_url, json=payload, timeout=10)
-            self.log(f"Lambda update response: {response.text}")
+
+            try:
+                response_json = response.json()
+                if response_json.get("message") != "DNS record updated successfully!":
+                    self.log(f"Lambda update response: {response.text}")
+            except ValueError:
+                self.log(f"Lambda update response (non-JSON): {response.text}")
+
         except Exception as e:
             self.log(f"Error calling lambda: {e}")
 
@@ -115,6 +122,8 @@ class UDPServer:
     def receive_loop(self):
         # Dictionary to store the start time of continuous "0" connectivity per domain
         self.connectivity_0_start_time = {}
+        # Dictionary to track the last logged message per sender IP
+        self.last_logged_messages = {}
 
         try:
             self.server_socket.bind(("", self.port))
@@ -129,43 +138,42 @@ class UDPServer:
                 sender_ip, sender_port = addr
                 msg = data.decode("utf-8").strip().split(",")
 
-                self.log(f"Received from {sender_ip}:{sender_port} -> {msg}")
-                # Expecting message format: domain, protocol, reported_ip, connectivity
                 if len(msg) >= 4:
                     domain_name = msg[0]
                     protocol = msg[1].lower()  # e.g., "v4" or "v6"
                     reported_ip = msg[2]
                     connectivity = msg[3]
 
-                    if protocol == "v4":
-                        # Update Lambda with the incoming IP/connection info
-                        self.update_client_ip_via_lambda(sender_ip, connectivity, domain_name=domain_name)
+                    log_msg = f"{sender_ip}:{sender_port} -> {domain_name}, {protocol}, {reported_ip}, {connectivity}"
+                    if self.last_logged_messages.get(sender_ip) != log_msg:
+                        self.log(log_msg)
+                        self.last_logged_messages[sender_ip] = log_msg
 
-                        if connectivity == "0":
-                            # If we don't have a start time for this domain, set it
-                            if domain_name not in self.connectivity_0_start_time:
-                                self.connectivity_0_start_time[domain_name] = time.time()
-                            else:
-                                # Check if we've been continuously seeing "0" for >= 5 minutes
-                                elapsed = time.time() - self.connectivity_0_start_time[domain_name]
-                                if elapsed >= 300:
-                                    # Replace IP since we've been at 0 for 5+ minutes
-                                    self.replace_instance_ip()
-
-                                    # Reset start time so that if it remains 0 for another 5 minutes,
-                                    # we'll replace again.
+                    match protocol:
+                        case "v4":
+                            self.update_client_ip_via_lambda(sender_ip, connectivity, domain_name=domain_name)
+                            if connectivity == "0":
+                                if domain_name not in self.connectivity_0_start_time:
                                     self.connectivity_0_start_time[domain_name] = time.time()
-                        else:
-                            # Any connectivity != "0", reset or remove the timer
-                            if domain_name in self.connectivity_0_start_time:
-                                del self.connectivity_0_start_time[domain_name]
-
-                    elif protocol == "v6":
-                        self.log("Protocol 'v6' ignored.")
-                    else:
-                        self.log(f"Unknown protocol: {protocol}")
+                                else:
+                                    elapsed = time.time() - self.connectivity_0_start_time[domain_name]
+                                    if elapsed >= 300:
+                                        self.replace_instance_ip()
+                                        self.connectivity_0_start_time[domain_name] = time.time()
+                            else:
+                                self.connectivity_0_start_time.pop(domain_name, None)
+                        case "v6":
+                            pass  # No need to log or handle
+                        case _:
+                            unknown_log_msg = f"Unknown protocol: {protocol}"
+                            if self.last_logged_messages.get(sender_ip) != unknown_log_msg:
+                                self.log(unknown_log_msg)
+                                self.last_logged_messages[sender_ip] = unknown_log_msg
                 else:
-                    self.log(f"Invalid message format: {msg}")
+                    invalid_log_msg = f"Invalid message format: {msg}"
+                    if self.last_logged_messages.get(sender_ip) != invalid_log_msg:
+                        self.log(invalid_log_msg)
+                        self.last_logged_messages[sender_ip] = invalid_log_msg
 
             except Exception as e:
                 self.log(f"Error handling message: {e}")
