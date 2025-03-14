@@ -27,9 +27,16 @@ class UDPServer:
 
     def log(self, msg):
         ts = datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S")
+        formatted_msg = f"[{ts}] {msg}"
+
+        # Print log message to console
+        print(formatted_msg)
+
         with open(self.log_file, "a+") as f:
-            f.write(f"[{ts}] {msg}\n")
-        if os.path.getsize(self.log_file) > 1024 * 128:
+            f.write(formatted_msg + "\n")
+
+        # Ensure log file does not exceed 10MB
+        if os.path.getsize(self.log_file) > 10 * 1024 * 1024:
             os.remove(self.log_file)
 
     def _request_ip(self, url):
