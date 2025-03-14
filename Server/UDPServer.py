@@ -122,8 +122,8 @@ class UDPServer:
     def receive_loop(self):
         # Dictionary to store the start time of continuous "0" connectivity per domain
         self.connectivity_0_start_time = {}
-        # Dictionary to track the last logged message per sender IP
-        self.last_logged_messages = {}
+        # Dictionary to track the last logged state per sender IP and domain
+        self.last_logged_states = {}
 
         try:
             self.server_socket.bind(("", self.port))
@@ -144,11 +144,14 @@ class UDPServer:
                     reported_ip = msg[2]
                     connectivity = msg[3]
 
-                    log_msg = f"{sender_ip}:{sender_port} -> {domain_name}, {protocol}, {reported_ip}, {connectivity}"
                     log_key = f"{sender_ip}:{domain_name}"
-                    if self.last_logged_messages.get(log_key) != log_msg:
+                    current_state = (reported_ip, connectivity)
+
+                    # Log only if the state (IP + connectivity) has changed
+                    if self.last_logged_states.get(log_key) != current_state:
+                        log_msg = f"{sender_ip}:{sender_port} -> {domain_name}, {protocol}, {reported_ip}, {connectivity}"
                         self.log(log_msg)
-                        self.last_logged_messages[log_key] = log_msg
+                        self.last_logged_states[log_key] = current_state
 
                     match protocol:
                         case "v4":
@@ -167,14 +170,14 @@ class UDPServer:
                             pass  # No need to log or handle
                         case _:
                             unknown_log_msg = f"Unknown protocol: {protocol}"
-                            if self.last_logged_messages.get(sender_ip) != unknown_log_msg:
+                            if self.last_logged_states.get(log_key) != unknown_log_msg:
                                 self.log(unknown_log_msg)
-                                self.last_logged_messages[sender_ip] = unknown_log_msg
+                                self.last_logged_states[log_key] = unknown_log_msg
                 else:
                     invalid_log_msg = f"Invalid message format: {msg}"
-                    if self.last_logged_messages.get(sender_ip) != invalid_log_msg:
+                    if self.last_logged_states.get(log_key) != invalid_log_msg:
                         self.log(invalid_log_msg)
-                        self.last_logged_messages[sender_ip] = invalid_log_msg
+                        self.last_logged_states[log_key] = invalid_log_msg
 
             except Exception as e:
                 self.log(f"Error handling message: {e}")
