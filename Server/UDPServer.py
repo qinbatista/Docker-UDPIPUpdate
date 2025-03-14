@@ -147,8 +147,8 @@ class UDPServer:
                     log_key = f"{sender_ip}:{domain_name}"
                     current_state = (reported_ip, connectivity)
 
-                    # Log only if the state (IP + connectivity) has changed
-                    if self.last_logged_states.get(log_key) != current_state:
+                    # Log only if the state (reported_ip + connectivity) has changed
+                    if log_key not in self.last_logged_states or self.last_logged_states[log_key] != current_state:
                         log_msg = f"{sender_ip}:{sender_port} -> {domain_name}, {protocol}, {reported_ip}, {connectivity}"
                         self.log(log_msg)
                         self.last_logged_states[log_key] = current_state
@@ -170,12 +170,12 @@ class UDPServer:
                             pass  # No need to log or handle
                         case _:
                             unknown_log_msg = f"Unknown protocol: {protocol}"
-                            if self.last_logged_states.get(log_key) != unknown_log_msg:
+                            if log_key not in self.last_logged_states or self.last_logged_states[log_key] != unknown_log_msg:
                                 self.log(unknown_log_msg)
                                 self.last_logged_states[log_key] = unknown_log_msg
                 else:
                     invalid_log_msg = f"Invalid message format: {msg}"
-                    if self.last_logged_states.get(log_key) != invalid_log_msg:
+                    if log_key not in self.last_logged_states or self.last_logged_states[log_key] != invalid_log_msg:
                         self.log(invalid_log_msg)
                         self.last_logged_states[log_key] = invalid_log_msg
 
