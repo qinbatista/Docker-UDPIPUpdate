@@ -145,9 +145,10 @@ class UDPServer:
                     connectivity = msg[3]
 
                     log_msg = f"{sender_ip}:{sender_port} -> {domain_name}, {protocol}, {reported_ip}, {connectivity}"
-                    if self.last_logged_messages.get(sender_ip) != log_msg:
+                    log_key = f"{sender_ip}:{domain_name}"
+                    if self.last_logged_messages.get(log_key) != log_msg:
                         self.log(log_msg)
-                        self.last_logged_messages[sender_ip] = log_msg
+                        self.last_logged_messages[log_key] = log_msg
 
                     match protocol:
                         case "v4":
