@@ -47,14 +47,10 @@ class UDPClient:
                     proc.wait()
                     if proc.returncode == 0:
                         reachable = 1
-                        self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] {server} reachable")
                         break
-                    else:
-                        self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] {server} not reachable")
                 except Exception as e:
                     self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] Error pinging {server}: {e}")
             self._can_connect = reachable
-            self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] Overall connectivity={self._can_connect}")
             time.sleep(60)
 
     def update_server(self):
