@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, time, requests, threading, subprocess, psutil
-from socket import socket, AF_INET, SOCK_DGRAM
+import os, time, requests, threading, subprocess
+import socket
 from datetime import datetime
+import sys
 
 
 class UDPClient:
@@ -27,7 +28,7 @@ class UDPClient:
             os.remove(self._log_file)
 
     def get_public_ip(self):
-        for url in self._ipv4_services:
+        for url in ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]:
             try:
                 r = requests.get(url, timeout=5)
                 r.raise_for_status()
@@ -36,29 +37,7 @@ class UDPClient:
                     return ip
             except Exception as e:
                 self.__log(f"[IP lookup] {url} failed: {e}")
-        return None
-
-    def get_local_ip(self):
-        try:
-            for iface, addrs in psutil.net_if_addrs().items():
-                # Skip typical VPN interfaces
-                if iface.startswith(("tun", "utun", "ppp", "tap", "wg")):
-                    continue
-                for addr in addrs:
-                    if addr.family == socket.AF_INET and not addr.address.startswith("127."):
-                        return addr.address
-            # Fallback: use socket method
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception as e:
-            self.__log(f"[local_ip] Error: {e}")
         return "0.0.0.0"
-
-    def get_ip(self):
-        return self.get_public_ip() or self.get_local_ip()
 
     def ping_server(self):
         while True:
@@ -80,10 +59,10 @@ class UDPClient:
             time.sleep(60)
 
     def update_server(self):
-        udp_client = socket(AF_INET, SOCK_DGRAM)
+        udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         while True:
             try:
-                ip = self.get_ip()
+                ip = self.get_public_ip()
                 message = f"{self._my_domain},v4,{ip},{self._can_connect}"
                 for server in self._target_servers:
                     udp_client.sendto(message.encode("utf-8"), (server, 7171))
@@ -94,11 +73,12 @@ class UDPClient:
 
 
 if __name__ == "__main__":
-    client_domain_name = os.environ.get("CLIENT_DOMAIN_NAME", "")
-    server_domain_names = os.environ.get("SERVER_DOMAIN_NAME", "")
-
-    ddns_client = UDPClient(client_domain_name, server_domain_names)
-    threading.Thread(target=ddns_client.ping_server, daemon=True).start()
-    threading.Thread(target=ddns_client.update_server, daemon=True).start()
     while True:
-        time.sleep(1)
+        client_domain_name = os.environ.get("CLIENT_DOMAIN_NAME", "")
+        server_domain_names = os.environ.get("SERVER_DOMAIN_NAME", "")
+
+        ddns_client = UDPClient(client_domain_name, server_domain_names)
+        threading.Thread(target=ddns_client.ping_server, daemon=True).start()
+        threading.Thread(target=ddns_client.update_server, daemon=True).start()
+        time.sleep(300)  # 5 minutes
+        os.execv(sys.executable, ["python"] + sys.argv)
