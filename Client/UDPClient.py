@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, time, requests, threading, subprocess
+import os, time, requests, threading, subprocess, psutil
 from socket import socket, AF_INET, SOCK_DGRAM
 from datetime import datetime
 
@@ -40,7 +40,15 @@ class UDPClient:
 
     def get_local_ip(self):
         try:
-            s = socket(AF_INET, SOCK_DGRAM)
+            for iface, addrs in psutil.net_if_addrs().items():
+                # Skip typical VPN interfaces
+                if iface.startswith(("tun", "utun", "ppp", "tap", "wg")):
+                    continue
+                for addr in addrs:
+                    if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                        return addr.address
+            # Fallback: use socket method
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             ip = s.getsockname()[0]
             s.close()

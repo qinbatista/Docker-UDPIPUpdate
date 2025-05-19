@@ -12,9 +12,11 @@ ENV SERVER_DOMAIN_NAME=${SERVER_DOMAIN_NAME}
 
 COPY . /
 
-# Install dependencies and upgrade pip
-RUN pip3 install --upgrade pip && \
-    pip3 install -r requirements.txt
+# Install build dependencies for psutil, then install Python packages, then remove build deps
+RUN apk add --no-cache gcc python3-dev musl-dev linux-headers && \
+    pip3 install --upgrade pip && \
+    pip3 install -r requirements.txt && \
+    apk del gcc python3-dev musl-dev linux-headers
 
 # Install and configure AWS CLI
 RUN apk add --no-cache aws-cli && \
