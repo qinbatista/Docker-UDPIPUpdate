@@ -18,8 +18,7 @@ class UDPClient:
         self._can_connect = 0
         self._ipv4_services = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]
 
-        self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}")
-        self.__log(f"Initial IP={self.get_ip()}")
+        self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}, Initial IP={self.get_public_ip()}")
 
     def __log(self, message):
         with open(self._log_file, "a+") as f:
@@ -80,5 +79,9 @@ if __name__ == "__main__":
         ddns_client = UDPClient(client_domain_name, server_domain_names)
         threading.Thread(target=ddns_client.ping_server, daemon=True).start()
         threading.Thread(target=ddns_client.update_server, daemon=True).start()
-        time.sleep(300)  # 5 minutes
-        os.execv(sys.executable, ["python"] + sys.argv)
+
+        start = time.time()
+        while True:
+            time.sleep(1)
+            if time.time() - start > 600:  # 10 minutes
+                os.execv(sys.executable, ["python"] + sys.argv)
