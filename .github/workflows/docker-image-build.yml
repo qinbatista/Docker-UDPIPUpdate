@@ -14,21 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Build udpserver Docker image
-        run: |
-          docker build -t qinbatista/udpserver ./Server \
-            --build-arg AWS_KEY="${{ secrets.AWS_KEY }}" \
-            --build-arg AWS_SECRET="${{ secrets.AWS_ACCESS }}" \
-            --build-arg IPV4_DOMAIN_UPDATE_LAMBDA="${{ vars.IPV4_DOMAIN_UPDATE_LAMBDA }}" \
-            --build-arg SERVER_DOMAIN_NAME="${{ vars.SERVER_DOMAIN_NAME }}"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
 
-      - name: Build udpclient Docker image
-        run: |
-          docker build -t qinbatista/udpclient ./Client \
-            --build-arg AWS_KEY="${{ secrets.AWS_KEY }}" \
-            --build-arg AWS_SECRET="${{ secrets.AWS_ACCESS }}" \
-            --build-arg CLIENT_DOMAIN_NAME="${{ vars.CLIENT_DOMAIN_NAME }}" \
-            --build-arg SERVER_DOMAIN_NAME="${{ vars.SERVER_DOMAIN_NAME }}"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
       - name: Login to Docker Hub
         uses: docker/login-action@v2
@@ -36,8 +26,28 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Push udpserver Docker image
-        run: docker push qinbatista/udpserver
+      - name: Build and push udpserver Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./Server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: qinbatista/udpserver:latest
+          build-args: |
+            AWS_KEY=${{ secrets.AWS_KEY }}
+            AWS_SECRET=${{ secrets.AWS_ACCESS }}
+            IPV4_DOMAIN_UPDATE_LAMBDA=${{ vars.IPV4_DOMAIN_UPDATE_LAMBDA }}
+            SERVER_DOMAIN_NAME=${{ vars.SERVER_DOMAIN_NAME }}
 
-      - name: Push udpclient Docker image
-        run: docker push qinbatista/udpclient
+      - name: Build and push udpclient Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./Client
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: qinbatista/udpclient:latest
+          build-args: |
+            AWS_KEY=${{ secrets.AWS_KEY }}
+            AWS_SECRET=${{ secrets.AWS_ACCESS }}
+            CLIENT_DOMAIN_NAME=${{ vars.CLIENT_DOMAIN_NAME }}
+            SERVER_DOMAIN_NAME=${{ vars.SERVER_DOMAIN_NAME }}

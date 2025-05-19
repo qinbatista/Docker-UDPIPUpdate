@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os, time, requests, threading, subprocess
-from socket import socket, AF_INET, SOCK_DGRAM, AF_INET6
+from socket import socket, AF_INET, SOCK_DGRAM
 from datetime import datetime
 
 
@@ -10,19 +10,15 @@ class UDPClient:
     def __init__(self, client_domain_name, server_domain_names, log_file=None):
         self._my_domain = client_domain_name
         self._target_servers = server_domain_names.split(",") if server_domain_names else []
-        # Place log file in the current script folder if not provided.
         if log_file is None:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             log_file = os.path.join(script_dir, "udp_client.log")
         self._log_file = log_file
         self._can_connect = 0
-
-        # Lists of services to get public IPs
         self._ipv4_services = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]
-        self._ipv6_services = ["https://api6.ipify.org", "https://ifconfig.co/ip", "https://ipv6.icanhazip.com", "https://ip6.seeip.org"]
 
         self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}")
-        self.__log(f"Initial IPv4={self.get_ipv4()}, Initial IPv6={self.get_ipv6()}")
+        self.__log(f"Initial IP={self.get_ip()}")
 
     def __log(self, message):
         with open(self._log_file, "a+") as f:
@@ -30,32 +26,19 @@ class UDPClient:
         if os.path.getsize(self._log_file) > 1024 * 128:
             os.remove(self._log_file)
 
-    def _request_ip(self, url):
-        try:
-            r = requests.get(url, timeout=5)
-            r.raise_for_status()
-            ip = r.text.strip()
-            if ip:
-                return ip
-        except Exception as e:
-            self.__log(f"[IP lookup] {url} failed: {e}")
-        return None
-
-    def get_public_ipv4(self):
+    def get_public_ip(self):
         for url in self._ipv4_services:
-            ip = self._request_ip(url)
-            if ip:
-                return ip
+            try:
+                r = requests.get(url, timeout=5)
+                r.raise_for_status()
+                ip = r.text.strip()
+                if ip:
+                    return ip
+            except Exception as e:
+                self.__log(f"[IP lookup] {url} failed: {e}")
         return None
 
-    def get_public_ipv6(self):
-        for url in self._ipv6_services:
-            ip = self._request_ip(url)
-            if ip:
-                return ip
-        return None
-
-    def get_local_ipv4(self):
+    def get_local_ip(self):
         try:
             s = socket(AF_INET, SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
@@ -63,27 +46,11 @@ class UDPClient:
             s.close()
             return ip
         except Exception as e:
-            self.__log(f"[local_ipv4] Error: {e}")
+            self.__log(f"[local_ip] Error: {e}")
         return "0.0.0.0"
 
-    def get_local_ipv6(self):
-        try:
-            s = socket(AF_INET6, SOCK_DGRAM)
-            s.connect(("2001:4860:4860::8888", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception as e:
-            self.__log(f"[local_ipv6] Error: {e}")
-        return "::"
-
-    def get_ipv4(self):
-        ip = self.get_public_ipv4()
-        return ip if ip else self.get_local_ipv4()
-
-    def get_ipv6(self):
-        ip = self.get_public_ipv6()
-        return ip if ip else self.get_local_ipv6()
+    def get_ip(self):
+        return self.get_public_ip() or self.get_local_ip()
 
     def ping_server(self):
         while True:
@@ -108,15 +75,11 @@ class UDPClient:
         udp_client = socket(AF_INET, SOCK_DGRAM)
         while True:
             try:
-                ip4 = self.get_ipv4()
-                ip6 = self.get_ipv6()
-                message_v4 = f"{self._my_domain},v4,{ip4},{self._can_connect}"
-                message_v6 = f"{self._my_domain},v6,{ip6},{self._can_connect}"
+                ip = self.get_ip()
+                message = f"{self._my_domain},v4,{ip},{self._can_connect}"
                 for server in self._target_servers:
-                    udp_client.sendto(message_v4.encode("utf-8"), (server, 7171))
-                    udp_client.sendto(message_v6.encode("utf-8"), (server, 7171))
-                    self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Sent IPv4: {message_v4} to {server}")
-                    self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Sent IPv6: {message_v6} to {server}")
+                    udp_client.sendto(message.encode("utf-8"), (server, 7171))
+                    self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Sent: {message} to {server}")
             except Exception as e:
                 self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Error: {e}")
             time.sleep(60)
