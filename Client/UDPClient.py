@@ -3,6 +3,8 @@
 
 import os, time, requests, threading, subprocess
 import socket
+import traceback
+import random
 from datetime import datetime
 import sys
 
@@ -27,7 +29,8 @@ class UDPClient:
             os.remove(self._log_file)
 
     def get_public_ip(self):
-        for url in ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]:
+        services = random.sample(self._ipv4_services, len(self._ipv4_services))  # shuffle to avoid per‑service rate limits
+        for url in services:
             try:
                 r = requests.get(url, timeout=5)
                 r.raise_for_status()
@@ -36,6 +39,7 @@ class UDPClient:
                     return ip
             except Exception as e:
                 self.__log(f"[IP lookup] {url} failed: {e}")
+        self.__log("[IP lookup] All services failed, returning 0.0.0.0")
         return "0.0.0.0"
 
     def ping_server(self):
@@ -50,20 +54,32 @@ class UDPClient:
                         break
                 except Exception as e:
                     self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] Error pinging {server}: {e}")
+            if reachable != self._can_connect:
+                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] Connectivity status changed: {self._can_connect} -> {reachable}")
             self._can_connect = reachable
             time.sleep(60)
 
     def update_server(self):
         udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp_client.settimeout(5)
         while True:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             try:
                 ip = self.get_public_ip()
                 message = f"{self._my_domain},v4,{ip},{self._can_connect}"
                 for server in self._target_servers:
-                    udp_client.sendto(message.encode("utf-8"), (server, 7171))
-                    self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Sent: {message} to {server}")
-            except Exception as e:
-                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][update] Error: {e}")
+                    try:
+                        addr = socket.gethostbyname(server)
+                    except socket.gaierror as e:
+                        self.__log(f"[{ts}][dns] Failed to resolve {server}: {e}")
+                        continue
+                    try:
+                        udp_client.sendto(message.encode("utf-8"), (addr, 7171))
+                        self.__log(f"[{ts}][update] Sent: {message} to {server} ({addr})")
+                    except Exception as e:
+                        self.__log(f"[{ts}][update] sendto error to {server} ({addr}): {e}")
+            except Exception:
+                self.__log(f"[{ts}][update] Unexpected error:\n{traceback.format_exc()}")
             time.sleep(60)
 
 
