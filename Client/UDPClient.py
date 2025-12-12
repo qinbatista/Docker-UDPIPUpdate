@@ -19,6 +19,10 @@ class UDPClient:
         self._log_file = log_file
         self._can_connect = 0
         self._ipv4_services = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]
+        self._vpn_domains = ["timov4.qinyupeng.com", "la.qinyupeng.com"]
+        self._vpn_ip_map = {}
+        self._vpn_ips_last_refresh = 0
+        self._vpn_refresh_interval = 300  # seconds
 
         self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}, Initial IP={self.get_public_ip()}")
 
@@ -59,6 +63,31 @@ class UDPClient:
             self._can_connect = reachable
             time.sleep(60)
 
+    def _refresh_vpn_ip_cache(self, force=False):
+        now = time.time()
+        if not force and self._vpn_ips_last_refresh and now - self._vpn_ips_last_refresh < self._vpn_refresh_interval:
+            return
+
+        new_map = {}
+        for domain in self._vpn_domains:
+            try:
+                infos = socket.getaddrinfo(domain, None, socket.AF_INET)
+                for info in infos:
+                    ip = info[4][0]
+                    new_map[ip] = domain
+            except Exception as e:
+                self.__log(f"[vpn-resolve] Failed to resolve {domain}: {e}")
+
+        if new_map:
+            self._vpn_ip_map = new_map
+        self._vpn_ips_last_refresh = now
+
+    def _vpn_domain_for_ip(self, ip):
+        if not ip or ip == "0.0.0.0":
+            return None
+        self._refresh_vpn_ip_cache()
+        return self._vpn_ip_map.get(ip)
+
     def update_server(self):
         udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         udp_client.settimeout(5)
@@ -66,7 +95,12 @@ class UDPClient:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             try:
                 ip = self.get_public_ip()
-                message = f"{self._my_domain},v4,{ip},{self._can_connect}"
+                vpn_domain = self._vpn_domain_for_ip(ip)
+                connectivity = str(self._can_connect)
+                if vpn_domain and connectivity == "0":
+                    connectivity = "or failed"
+                    self.__log(f"[{ts}][update] Local traffic routed via {vpn_domain} ({ip}); reporting connectivity as '{connectivity}' to avoid VPN false-alarm.")
+                message = f"{self._my_domain},v4,{ip},{connectivity}"
                 for server in self._target_servers:
                     try:
                         addr = socket.gethostbyname(server)
