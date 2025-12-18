@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os, time, threading, subprocess, pytz, requests
-from socket import socket, AF_INET, SOCK_DGRAM, AF_INET6
+from socket import socket, AF_INET, SOCK_DGRAM, AF_INET6, gethostbyname
 from datetime import datetime
 from LightSailManager import LightSail
 
@@ -24,6 +24,8 @@ class UDPServer:
         self._ipv6_services = ["https://api6.ipify.org", "https://ifconfig.co/ip", "https://ipv6.icanhazip.com", "https://ip6.seeip.org"]
         self.log(f"Initial IPv4={self.get_ipv4()}, Initial IPv6={self.get_ipv6()}")
         self.__light_sail = LightSail()
+        self.excluded_domains = ["la.qinyupeng.com", "timov4.qinyupeng.com"]
+        self.excluded_ips_cache = {"ips": set(), "last_updated": 0}
 
     def log(self, msg):
         ts = datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S")
@@ -98,6 +100,22 @@ class UDPServer:
         except Exception as e:
             self.log(f"Error replacing instance IP: {e}")
 
+    def _get_excluded_ips(self):
+        now = time.time()
+        # Update cache every 5 minutes (300 seconds)
+        if now - self.excluded_ips_cache["last_updated"] > 300:
+            current_ips = set()
+            for domain in self.excluded_domains:
+                try:
+                    ip = gethostbyname(domain)
+                    current_ips.add(ip)
+                except Exception as e:
+                    self.log(f"Error resolving excluded domain {domain}: {e}")
+            self.excluded_ips_cache["ips"] = current_ips
+            self.excluded_ips_cache["last_updated"] = now
+            self.log(f"Updated excluded IPs: {self.excluded_ips_cache['ips']}")
+        return self.excluded_ips_cache["ips"]
+
     def update_client_ip_via_lambda(self, client_ip, connectivity, domain_name=None):
         try:
             payload = {"client_ip": client_ip, "connectivity": connectivity, "domain_name": domain_name}
@@ -162,6 +180,14 @@ class UDPServer:
 
                     match protocol:
                         case "v4":
+                            excluded_ips = self._get_excluded_ips()
+                            if sender_ip in excluded_ips:
+                                log_msg = f"Skipping DNS update for excluded IP: {sender_ip} ({domain_name})"
+                                if log_key not in self.last_logged_states or self.last_logged_states[log_key] != "SKIPPED":
+                                    self.log(log_msg)
+                                    self.last_logged_states[log_key] = "SKIPPED"
+                                continue
+
                             self.update_client_ip_via_lambda(sender_ip, connectivity, domain_name=domain_name)
                             if connectivity == "0":
                                 if domain_name not in self.connectivity_0_start_time:
