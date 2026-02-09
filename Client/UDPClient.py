@@ -9,7 +9,6 @@ import subprocess
 import sys
 import threading
 import time
-import traceback
 from collections import Counter
 from datetime import datetime
 
@@ -25,6 +24,8 @@ class UDPClient:
             log_file = os.path.join(script_dir, "udp_client.log")
         self._log_file = log_file
         self._can_connect = 0
+        self._connected_server = "-"
+        self._connected_server_ip = "-"
         self._ipv4_services = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]
         self._geoip_country_services = ["https://ipinfo.io/{ip}/country", "https://ipapi.co/{ip}/country/"]
         self._accepted_country_code = "CN"
@@ -37,10 +38,8 @@ class UDPClient:
         self._last_good_public_ip = None
         self._max_log_size_bytes = 10 * 1024 * 1024
         self._log_cooldown = {}
-        self._dns_failed_servers = set()
-        self._send_failed_servers = set()
-        self._last_rejection_summary = ""
-        self._last_sent_state = None
+        self._last_ip_rejection_summary = ""
+        self._last_ip_source = "none"
         self._last_observed_public_ip = None
         self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}, Initial IP={self.get_public_ip()}")
 
@@ -119,40 +118,39 @@ class UDPClient:
             allowed, reason = self._is_allowed_public_ip(ip_value)
             if allowed:
                 self._last_good_public_ip = ip_value
-                self._last_rejection_summary = ""
+                self._last_ip_rejection_summary = ""
+                self._last_ip_source = "fresh"
                 return ip_value
             rejections.append(reason)
-        rejection_summary = ",".join(sorted(set(rejections))) if rejections else ""
+        self._last_ip_rejection_summary = ",".join(sorted(set(rejections))) if rejections else "lookup_failed"
         if self._last_good_public_ip:
-            if rejection_summary and rejection_summary != self._last_rejection_summary:
-                self.__log(f"[IP lookup] Using last good IP due to candidate rejection: {rejection_summary}")
-                self._last_rejection_summary = rejection_summary
-            self._log_with_cooldown("ip-fallback", f"[IP lookup] Fallback to last good IP: {self._last_good_public_ip}", 600)
+            self._last_ip_source = "fallback"
             return self._last_good_public_ip
-        if not candidates:
-            self._log_with_cooldown("no-ip-candidates", "[IP lookup] No IPv4 candidates from lookup services.", 600)
-        else:
-            if rejection_summary != self._last_rejection_summary:
-                self.__log(f"[IP lookup] No allowed IPv4 candidate: {rejection_summary}")
-                self._last_rejection_summary = rejection_summary
-            self._log_with_cooldown("no-allowed-ip", "[IP lookup] No valid public CN IPv4 available.", 600)
+        self._last_ip_source = "none"
         return "0.0.0.0"
 
     def ping_server(self):
         while True:
             reachable = 0
+            connected_server = "-"
+            connected_server_ip = "-"
             for server in self._target_servers:
                 try:
-                    process = subprocess.Popen(f"ping -c 1 {server}", stdout=subprocess.PIPE, universal_newlines=True, shell=True)
+                    server_ip = socket.gethostbyname(server)
+                    process = subprocess.Popen(f"ping -c 1 {server_ip}", stdout=subprocess.PIPE, universal_newlines=True, shell=True)
                     process.wait()
                     if process.returncode == 0:
                         reachable = 1
+                        connected_server = server
+                        connected_server_ip = server_ip
                         break
                 except Exception as error:
                     self._log_with_cooldown(f"ping-error-{server}", f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] Error pinging {server}: {error}", 600)
             if reachable != self._can_connect:
-                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] Connectivity status changed: {self._can_connect} -> {reachable}")
+                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] Connectivity status changed: {self._can_connect} -> {reachable}, target={connected_server}@{connected_server_ip}")
             self._can_connect = reachable
+            self._connected_server = connected_server
+            self._connected_server_ip = connected_server_ip
             time.sleep(60)
 
     def _refresh_vpn_ip_cache(self, force=False):
@@ -184,55 +182,44 @@ class UDPClient:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             try:
                 ip_value = self.get_public_ip()
-                if ip_value != self._last_observed_public_ip:
-                    if self._last_observed_public_ip and ip_value != "0.0.0.0":
-                        self.__log(f"[{ts}][ip] Public IPv4 changed: {self._last_observed_public_ip} -> {ip_value}")
-                    elif ip_value != "0.0.0.0":
-                        self.__log(f"[{ts}][ip] Current public CN IPv4: {ip_value}")
-                    else:
-                        self.__log(f"[{ts}][ip] Valid public CN IPv4 unavailable.")
-                    self._last_observed_public_ip = ip_value
-                if ip_value == "0.0.0.0":
-                    self._log_with_cooldown("update-skip-no-valid-ip", f"[{ts}][update] Skip sending update: no valid public CN IPv4 available.", 600)
-                    time.sleep(60)
-                    continue
+                previous_ip = self._last_observed_public_ip if self._last_observed_public_ip else "-"
+                ip_changed = ip_value != self._last_observed_public_ip
+                self._last_observed_public_ip = ip_value
                 vpn_domain = self._vpn_domain_for_ip(ip_value)
-                connectivity = str(self._can_connect)
-                if vpn_domain and connectivity == "0":
-                    connectivity = "or failed"
-                    self._log_with_cooldown("vpn-route-connectivity", f"[{ts}][update] Local traffic routed via {vpn_domain} ({ip_value}); reporting connectivity as '{connectivity}' to avoid VPN false-alarm.", 600)
-                message = f"{self._my_domain},v4,{ip_value},{connectivity}"
+                connectivity_payload = str(self._can_connect)
+                connectivity_text = f"{self._can_connect}({self._connected_server}@{self._connected_server_ip})" if self._can_connect == 1 else "0(none)"
+                if vpn_domain and connectivity_payload == "0":
+                    connectivity_payload = "or failed"
+                    connectivity_text = f"{connectivity_text}->send:{connectivity_payload}"
                 sent_servers = []
-                for server in self._target_servers:
-                    try:
-                        addr = socket.gethostbyname(server)
-                    except socket.gaierror as error:
-                        if server not in self._dns_failed_servers:
-                            self.__log(f"[{ts}][dns] Resolve failed for {server}, suppressing repeats until recovery: {error}")
-                            self._dns_failed_servers.add(server)
-                        continue
-                    if server in self._dns_failed_servers:
-                        self.__log(f"[{ts}][dns] Resolve recovered for {server}: {addr}")
-                        self._dns_failed_servers.remove(server)
-                    try:
-                        udp_client.sendto(message.encode("utf-8"), (addr, 7171))
-                        sent_servers.append(server)
-                        if server in self._send_failed_servers:
-                            self.__log(f"[{ts}][update] Send recovered for {server} ({addr})")
-                            self._send_failed_servers.remove(server)
-                    except Exception as error:
-                        if server not in self._send_failed_servers:
-                            self.__log(f"[{ts}][update] Send failed for {server} ({addr}), suppressing repeats until recovery: {error}")
-                            self._send_failed_servers.add(server)
-                if sent_servers:
-                    state = (ip_value, connectivity)
-                    if state != self._last_sent_state:
-                        self.__log(f"[{ts}][update] Sent valid IP update: ip={ip_value}, connectivity={connectivity}, targets={len(sent_servers)}")
-                        self._last_sent_state = state
-                else:
-                    self._log_with_cooldown("update-no-success", f"[{ts}][update] No server accepted update packet.", 600)
-            except Exception:
-                self._log_with_cooldown("update-unexpected-error", f"[{ts}][update] Unexpected error:\n{traceback.format_exc()}", 300)
+                dns_failed_servers = []
+                send_failed_servers = []
+                if ip_value != "0.0.0.0":
+                    message = f"{self._my_domain},v4,{ip_value},{connectivity_payload}"
+                    for server in self._target_servers:
+                        try:
+                            addr = socket.gethostbyname(server)
+                        except socket.gaierror as error:
+                            dns_failed_servers.append(f"{server}:{error}")
+                            continue
+                        try:
+                            udp_client.sendto(message.encode("utf-8"), (addr, 7171))
+                            sent_servers.append(server)
+                        except Exception as error:
+                            send_failed_servers.append(f"{server}:{error}")
+                info_items = []
+                if ip_value == "0.0.0.0":
+                    info_items.append(f"reason={self._last_ip_rejection_summary}")
+                if vpn_domain:
+                    info_items.append(f"vpn={vpn_domain}")
+                if dns_failed_servers:
+                    info_items.append(f"dns_fail={';'.join(dns_failed_servers)}")
+                if send_failed_servers:
+                    info_items.append(f"send_fail={';'.join(send_failed_servers)}")
+                info_text = " | ".join(info_items) if info_items else "ok"
+                self.__log(f"[{ts}][update] ip={ip_value} changed={1 if ip_changed else 0} prev={previous_ip} source={self._last_ip_source} connectivity={connectivity_text} sent={len(sent_servers)}/{len(self._target_servers)} info={info_text}")
+            except Exception as error:
+                self.__log(f"[{ts}][update] cycle_error={error}")
             time.sleep(60)
 
 
