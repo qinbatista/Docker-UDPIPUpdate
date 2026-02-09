@@ -35,12 +35,13 @@ class UDPClient:
         self._vpn_ips_last_refresh = 0
         self._vpn_refresh_interval = 300
         self._last_good_public_ip = None
+        self._max_log_size_bytes = 10 * 1024 * 1024
         self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}, Initial IP={self.get_public_ip()}")
 
     def __log(self, message):
         with open(self._log_file, "a+") as file_handle:
             file_handle.write(message + "\n")
-        if os.path.getsize(self._log_file) > 1024 * 128:
+        if os.path.getsize(self._log_file) > self._max_log_size_bytes:
             os.remove(self._log_file)
 
     def _normalize_ipv4(self, ip_text):
