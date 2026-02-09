@@ -199,9 +199,8 @@ class UDPServer:
     def receive_loop(self):
         # Dictionary to store the start time of continuous "0" connectivity per domain
         self.connectivity_0_start_time = {}
-        # Dictionary to track the last logged state per sender IP and domain
+        # Dictionary to track the last logged state for non-v4 fallback logs.
         self.last_logged_states = {}
-        self.last_logged_times = {}
         self.last_dns_update_states = {}
 
         try:
@@ -224,32 +223,17 @@ class UDPServer:
                     reported_ip = msg[2]
                     connectivity = msg[3]
 
-                    log_key = f"{sender_ip}:{domain_name}"
-                    current_state = (reported_ip, connectivity)
-                    now = time.time()
-
-                    # Log immediately on state change, otherwise at most once per receive interval.
-                    if log_key not in self.last_logged_states or self.last_logged_states[log_key] != current_state or now - self.last_logged_times.get(log_key, 0) >= self._receive_log_interval_seconds:
-                        log_msg = f"client={sender_ip} domain={domain_name} protocol={protocol} reported_ip={reported_ip} connectivity={connectivity}"
-                        self.log(log_msg)
-                        self.last_logged_states[log_key] = current_state
-                        self.last_logged_times[log_key] = now
-
                     match protocol:
                         case "v4":
+                            base_log = f"client={sender_ip} domain={domain_name} protocol={protocol} reported_ip={reported_ip} connectivity={connectivity}"
                             update_ip = self._normalize_global_ipv4(reported_ip) or self._normalize_global_ipv4(sender_ip)
                             decision_key = f"dns-update:{sender_ip}:{domain_name}"
                             if not update_ip:
-                                self._log_periodic_state(decision_key, f"dns_update domain={domain_name} action=not_updated reason=invalid_non_global_ip sender_ip={sender_ip} reported_ip={reported_ip}", self._receive_log_interval_seconds)
-                                self._log_with_cooldown(f"invalid-update-ip-{domain_name}", f"Skip DNS update for {domain_name}: sender_ip={sender_ip}, reported_ip={reported_ip} not global IPv4", 60)
+                                self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=invalid_non_global_ip update_ip=-", self._receive_log_interval_seconds)
                                 continue
                             excluded_ips = self._get_excluded_ips()
                             if sender_ip in excluded_ips or update_ip in excluded_ips:
-                                self._log_periodic_state(decision_key, f"dns_update domain={domain_name} action=not_updated reason=excluded_ip sender_ip={sender_ip} update_ip={update_ip}", self._receive_log_interval_seconds)
-                                log_msg = f"Skipping DNS update for excluded IP: sender={sender_ip}, update_ip={update_ip} ({domain_name})"
-                                if log_key not in self.last_logged_states or self.last_logged_states[log_key] != "SKIPPED":
-                                    self.log(log_msg)
-                                    self.last_logged_states[log_key] = "SKIPPED"
+                                self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=excluded_ip update_ip={update_ip}", self._receive_log_interval_seconds)
                                 continue
 
                             dns_update_key = f"{domain_name}:v4"
@@ -257,9 +241,9 @@ class UDPServer:
                             if self.last_dns_update_states.get(dns_update_key) != dns_update_state:
                                 self.update_client_ip_via_lambda(update_ip, connectivity, domain_name=domain_name)
                                 self.last_dns_update_states[dns_update_key] = dns_update_state
-                                self._log_periodic_state(decision_key, f"dns_update domain={domain_name} action=updated reason=state_changed update_ip={update_ip} connectivity={connectivity}", self._receive_log_interval_seconds)
+                                self._log_periodic_state(decision_key, f"{base_log} action=updated reason=state_changed update_ip={update_ip}", self._receive_log_interval_seconds)
                             else:
-                                self._log_periodic_state(decision_key, f"dns_update domain={domain_name} action=not_updated reason=same_state update_ip={update_ip} connectivity={connectivity}", self._receive_log_interval_seconds)
+                                self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=same_state update_ip={update_ip}", self._receive_log_interval_seconds)
                             if connectivity == "0":
                                 if domain_name not in self.connectivity_0_start_time:
                                     self.connectivity_0_start_time[domain_name] = time.time()
@@ -273,10 +257,8 @@ class UDPServer:
                         case "v6":
                             pass  # No need to log or handle
                         case _:
-                            unknown_log_msg = f"Unknown protocol: {protocol}"
-                            if log_key not in self.last_logged_states or self.last_logged_states[log_key] != unknown_log_msg:
-                                self.log(unknown_log_msg)
-                                self.last_logged_states[log_key] = unknown_log_msg
+                            unknown_log_msg = f"client={sender_ip} domain={domain_name} protocol={protocol} reported_ip={reported_ip} connectivity={connectivity} action=not_updated reason=unknown_protocol update_ip=-"
+                            self._log_periodic_state(f"unknown-protocol:{sender_ip}:{domain_name}", unknown_log_msg, self._receive_log_interval_seconds)
                 else:
                     invalid_log_msg = f"Invalid message format from {sender_ip}:{sender_port}: {msg}"
                     if log_key not in self.last_logged_states or self.last_logged_states[log_key] != invalid_log_msg:
