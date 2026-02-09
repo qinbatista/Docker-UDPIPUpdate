@@ -41,6 +41,7 @@ class UDPClient:
         self._last_ip_rejection_summary = ""
         self._last_ip_source = "none"
         self._last_observed_public_ip = None
+        self._last_upload_success_ip = None
         self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}, Initial IP={self.get_public_ip()}")
 
     def __log(self, message):
@@ -175,6 +176,19 @@ class UDPClient:
         self._refresh_vpn_ip_cache()
         return self._vpn_ip_map.get(ip_value)
 
+    def _resolve_domain_ipv4(self, domain_name):
+        if not domain_name:
+            return "", "not_set"
+        try:
+            infos = socket.getaddrinfo(domain_name, None, socket.AF_INET)
+            for info in infos:
+                resolved_ip = info[4][0]
+                if resolved_ip:
+                    return resolved_ip, "ok"
+        except Exception:
+            return "", "fail"
+        return "", "fail"
+
     def update_server(self):
         udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         udp_client.settimeout(5)
@@ -191,10 +205,25 @@ class UDPClient:
                 if vpn_domain and connectivity_payload == "0":
                     connectivity_payload = "or failed"
                     connectivity_text = f"{connectivity_text}->send:{connectivity_payload}"
+                dns_ip, dns_status = self._resolve_domain_ipv4(self._my_domain)
+                dns_match = dns_status == "ok" and ip_value != "0.0.0.0" and dns_ip == ip_value
+                if dns_match:
+                    self._last_upload_success_ip = ip_value
+                should_upload = True
+                action = "send"
+                if ip_value == "0.0.0.0":
+                    should_upload = False
+                    action = "skip_invalid_ip"
+                elif ip_value == self._last_upload_success_ip and dns_match:
+                    should_upload = False
+                    action = "skip_same_ip_dns_ok"
+                elif dns_match:
+                    should_upload = False
+                    action = "skip_dns_already_ok"
                 sent_servers = []
                 dns_failed_servers = []
                 send_failed_servers = []
-                if ip_value != "0.0.0.0":
+                if should_upload:
                     message = f"{self._my_domain},v4,{ip_value},{connectivity_payload}"
                     for server in self._target_servers:
                         try:
@@ -207,17 +236,21 @@ class UDPClient:
                             sent_servers.append(server)
                         except Exception as error:
                             send_failed_servers.append(f"{server}:{error}")
+                    if sent_servers:
+                        self._last_upload_success_ip = ip_value
                 info_items = []
                 if ip_value == "0.0.0.0":
                     info_items.append(f"reason={self._last_ip_rejection_summary}")
                 if vpn_domain:
                     info_items.append(f"vpn={vpn_domain}")
+                if dns_status != "ok":
+                    info_items.append(f"dns_status={dns_status}")
                 if dns_failed_servers:
                     info_items.append(f"dns_fail={';'.join(dns_failed_servers)}")
                 if send_failed_servers:
                     info_items.append(f"send_fail={';'.join(send_failed_servers)}")
                 info_text = " | ".join(info_items) if info_items else "ok"
-                self.__log(f"[{ts}][update] ip={ip_value} changed={1 if ip_changed else 0} prev={previous_ip} source={self._last_ip_source} connectivity={connectivity_text} sent={len(sent_servers)}/{len(self._target_servers)} info={info_text}")
+                self.__log(f"[{ts}][update] ip={ip_value} changed={1 if ip_changed else 0} prev={previous_ip} source={self._last_ip_source} dns={dns_ip if dns_status == 'ok' else '-'} dns_ok={1 if dns_match else 0} action={action} connectivity={connectivity_text} sent={len(sent_servers)}/{len(self._target_servers)} info={info_text}")
             except Exception as error:
                 self.__log(f"[{ts}][update] cycle_error={error}")
             time.sleep(60)

@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, time, threading, subprocess, pytz, requests
-from socket import socket, AF_INET, SOCK_DGRAM, AF_INET6, gethostbyname
+import os
+import threading
+import time
 from datetime import datetime
+from socket import AF_INET, AF_INET6, SOCK_DGRAM, gethostbyname, socket
+
+import pytz
+import requests
+
 from LightSailManager import LightSail
 
 
@@ -15,6 +21,9 @@ class UDPServer:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             log_file = os.path.join(script_dir, "udp_server.log")
         self.log_file = log_file
+        self._max_log_size_bytes = 20 * 1024 * 1024
+        self._log_cooldown = {}
+        self._log_state = {}
         self.timezone = pytz.timezone("Asia/Shanghai")
         self.lambda_url = os.environ.get("IPV4_DOMAIN_UPDATE_LAMBDA", "")
         if not self.lambda_url:
@@ -37,9 +46,21 @@ class UDPServer:
         with open(self.log_file, "a+") as f:
             f.write(formatted_msg + "\n")
 
-        # Ensure log file does not exceed 10MB
-        if os.path.getsize(self.log_file) > 10 * 1024 * 1024:
+        # Ensure log file does not exceed 20MB
+        if os.path.getsize(self.log_file) > self._max_log_size_bytes:
             os.remove(self.log_file)
+
+    def _log_with_cooldown(self, key, msg, cooldown_seconds):
+        now = time.time()
+        last_time = self._log_cooldown.get(key, 0)
+        if now - last_time >= cooldown_seconds:
+            self.log(msg)
+            self._log_cooldown[key] = now
+
+    def _log_on_change(self, key, msg):
+        if self._log_state.get(key) != msg:
+            self.log(msg)
+            self._log_state[key] = msg
 
     def _request_ip(self, url):
         try:
@@ -47,23 +68,30 @@ class UDPServer:
             r.raise_for_status()
             ip = r.text.strip()
             if ip:
-                return ip
+                return ip, None
+            return None, "empty_response"
         except Exception as e:
-            self.log(f"[IP lookup] {url} failed: {e}")
-        return None
+            return None, str(e)
 
-    def _get_public_ip(self, services):
+    def _get_public_ip(self, services, label):
+        errors = []
         for url in services:
-            ip = self._request_ip(url)
+            ip, error = self._request_ip(url)
             if ip:
+                if errors:
+                    self._log_on_change(f"{label}-lookup-state", f"[IP lookup] {label} recovered via {url}")
                 return ip
+            if error:
+                errors.append(f"{url}:{error}")
+        if errors:
+            self._log_with_cooldown(f"{label}-lookup-failed", f"[IP lookup] {label} unavailable ({len(errors)}/{len(services)} failed), first={errors[0]}", 600)
         return None
 
     def get_public_ipv4(self):
-        return self._get_public_ip(self._ipv4_services)
+        return self._get_public_ip(self._ipv4_services, "IPv4")
 
     def get_public_ipv6(self):
-        return self._get_public_ip(self._ipv6_services)
+        return self._get_public_ip(self._ipv6_services, "IPv6")
 
     def get_local_ipv4(self):
         try:
@@ -73,7 +101,7 @@ class UDPServer:
             s.close()
             return ip
         except Exception as e:
-            self.log(f"[local_ipv4] Error: {e}")
+            self._log_with_cooldown("local-ipv4-failed", f"[local_ipv4] unavailable: {e}", 600)
         return "0.0.0.0"
 
     def get_local_ipv6(self):
@@ -84,7 +112,7 @@ class UDPServer:
             s.close()
             return ip
         except Exception as e:
-            self.log(f"[local_ipv6] Error: {e}")
+            self._log_with_cooldown("local-ipv6-failed", f"[local_ipv6] unavailable: {e}", 600)
         return "::"
 
     def get_ipv4(self):
@@ -104,16 +132,18 @@ class UDPServer:
         now = time.time()
         # Update cache every 5 minutes (300 seconds)
         if now - self.excluded_ips_cache["last_updated"] > 300:
+            previous_ips = set(self.excluded_ips_cache["ips"])
             current_ips = set()
             for domain in self.excluded_domains:
                 try:
                     ip = gethostbyname(domain)
                     current_ips.add(ip)
                 except Exception as e:
-                    self.log(f"Error resolving excluded domain {domain}: {e}")
+                    self._log_with_cooldown(f"excluded-resolve-{domain}", f"Error resolving excluded domain {domain}: {e}", 600)
             self.excluded_ips_cache["ips"] = current_ips
             self.excluded_ips_cache["last_updated"] = now
-            self.log(f"Updated excluded IPs: {self.excluded_ips_cache['ips']}")
+            if current_ips != previous_ips:
+                self.log(f"Updated excluded IPs: {current_ips}")
         return self.excluded_ips_cache["ips"]
 
     def update_client_ip_via_lambda(self, client_ip, connectivity, domain_name=None):
@@ -162,6 +192,7 @@ class UDPServer:
                 data, addr = self.server_socket.recvfrom(1024)
                 sender_ip, sender_port = addr
                 msg = data.decode("utf-8").strip().split(",")
+                log_key = f"{sender_ip}:invalid"
 
                 if len(msg) >= 4:
                     domain_name = msg[0]
@@ -174,7 +205,7 @@ class UDPServer:
 
                     # Log only if the state (reported_ip + connectivity) has changed
                     if log_key not in self.last_logged_states or self.last_logged_states[log_key] != current_state:
-                        log_msg = f"{sender_ip}:{sender_port} -> {domain_name}, {protocol}, {reported_ip}, {connectivity}"
+                        log_msg = f"client={sender_ip} domain={domain_name} protocol={protocol} reported_ip={reported_ip} connectivity={connectivity}"
                         self.log(log_msg)
                         self.last_logged_states[log_key] = current_state
 
@@ -207,7 +238,7 @@ class UDPServer:
                                 self.log(unknown_log_msg)
                                 self.last_logged_states[log_key] = unknown_log_msg
                 else:
-                    invalid_log_msg = f"Invalid message format: {msg}"
+                    invalid_log_msg = f"Invalid message format from {sender_ip}:{sender_port}: {msg}"
                     if log_key not in self.last_logged_states or self.last_logged_states[log_key] != invalid_log_msg:
                         self.log(invalid_log_msg)
                         self.last_logged_states[log_key] = invalid_log_msg
