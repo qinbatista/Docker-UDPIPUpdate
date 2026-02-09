@@ -4,6 +4,7 @@
 import os
 import threading
 import time
+import ipaddress
 from datetime import datetime
 from socket import AF_INET, AF_INET6, SOCK_DGRAM, gethostbyname, socket
 
@@ -24,6 +25,7 @@ class UDPServer:
         self._max_log_size_bytes = 20 * 1024 * 1024
         self._log_cooldown = {}
         self._log_state = {}
+        self._receive_log_interval_seconds = max(1, int(os.environ.get("RECEIVE_LOG_INTERVAL_SECONDS", "5")))
         self.timezone = pytz.timezone("Asia/Shanghai")
         self.lambda_url = os.environ.get("IPV4_DOMAIN_UPDATE_LAMBDA", "")
         if not self.lambda_url:
@@ -61,6 +63,26 @@ class UDPServer:
         if self._log_state.get(key) != msg:
             self.log(msg)
             self._log_state[key] = msg
+
+    def _log_periodic_state(self, key, msg, interval_seconds):
+        now = time.time()
+        if self._log_state.get(key) != msg:
+            self.log(msg)
+            self._log_state[key] = msg
+            self._log_cooldown[key] = now
+            return
+        if now - self._log_cooldown.get(key, 0) >= interval_seconds:
+            self.log(msg)
+            self._log_cooldown[key] = now
+
+    def _normalize_global_ipv4(self, ip_value):
+        try:
+            normalized_ip = str(ipaddress.IPv4Address(ip_value.strip()))
+            if ipaddress.IPv4Address(normalized_ip).is_global:
+                return normalized_ip
+        except Exception:
+            pass
+        return None
 
     def _request_ip(self, url):
         try:
@@ -179,6 +201,8 @@ class UDPServer:
         self.connectivity_0_start_time = {}
         # Dictionary to track the last logged state per sender IP and domain
         self.last_logged_states = {}
+        self.last_logged_times = {}
+        self.last_dns_update_states = {}
 
         try:
             self.server_socket.bind(("", self.port))
@@ -202,24 +226,40 @@ class UDPServer:
 
                     log_key = f"{sender_ip}:{domain_name}"
                     current_state = (reported_ip, connectivity)
+                    now = time.time()
 
-                    # Log only if the state (reported_ip + connectivity) has changed
-                    if log_key not in self.last_logged_states or self.last_logged_states[log_key] != current_state:
+                    # Log immediately on state change, otherwise at most once per receive interval.
+                    if log_key not in self.last_logged_states or self.last_logged_states[log_key] != current_state or now - self.last_logged_times.get(log_key, 0) >= self._receive_log_interval_seconds:
                         log_msg = f"client={sender_ip} domain={domain_name} protocol={protocol} reported_ip={reported_ip} connectivity={connectivity}"
                         self.log(log_msg)
                         self.last_logged_states[log_key] = current_state
+                        self.last_logged_times[log_key] = now
 
                     match protocol:
                         case "v4":
+                            update_ip = self._normalize_global_ipv4(reported_ip) or self._normalize_global_ipv4(sender_ip)
+                            decision_key = f"dns-update:{sender_ip}:{domain_name}"
+                            if not update_ip:
+                                self._log_periodic_state(decision_key, f"dns_update domain={domain_name} action=not_updated reason=invalid_non_global_ip sender_ip={sender_ip} reported_ip={reported_ip}", self._receive_log_interval_seconds)
+                                self._log_with_cooldown(f"invalid-update-ip-{domain_name}", f"Skip DNS update for {domain_name}: sender_ip={sender_ip}, reported_ip={reported_ip} not global IPv4", 60)
+                                continue
                             excluded_ips = self._get_excluded_ips()
-                            if sender_ip in excluded_ips:
-                                log_msg = f"Skipping DNS update for excluded IP: {sender_ip} ({domain_name})"
+                            if sender_ip in excluded_ips or update_ip in excluded_ips:
+                                self._log_periodic_state(decision_key, f"dns_update domain={domain_name} action=not_updated reason=excluded_ip sender_ip={sender_ip} update_ip={update_ip}", self._receive_log_interval_seconds)
+                                log_msg = f"Skipping DNS update for excluded IP: sender={sender_ip}, update_ip={update_ip} ({domain_name})"
                                 if log_key not in self.last_logged_states or self.last_logged_states[log_key] != "SKIPPED":
                                     self.log(log_msg)
                                     self.last_logged_states[log_key] = "SKIPPED"
                                 continue
 
-                            self.update_client_ip_via_lambda(sender_ip, connectivity, domain_name=domain_name)
+                            dns_update_key = f"{domain_name}:v4"
+                            dns_update_state = (update_ip, connectivity)
+                            if self.last_dns_update_states.get(dns_update_key) != dns_update_state:
+                                self.update_client_ip_via_lambda(update_ip, connectivity, domain_name=domain_name)
+                                self.last_dns_update_states[dns_update_key] = dns_update_state
+                                self._log_periodic_state(decision_key, f"dns_update domain={domain_name} action=updated reason=state_changed update_ip={update_ip} connectivity={connectivity}", self._receive_log_interval_seconds)
+                            else:
+                                self._log_periodic_state(decision_key, f"dns_update domain={domain_name} action=not_updated reason=same_state update_ip={update_ip} connectivity={connectivity}", self._receive_log_interval_seconds)
                             if connectivity == "0":
                                 if domain_name not in self.connectivity_0_start_time:
                                     self.connectivity_0_start_time[domain_name] = time.time()
