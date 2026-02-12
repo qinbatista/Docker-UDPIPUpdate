@@ -43,7 +43,15 @@ class UDPClient:
         self._last_observed_public_ip = None
         self._last_upload_success_ip = None
         self._ping_interval_seconds = max(5, int(os.environ.get("PING_INTERVAL_SECONDS", "5")))
-        self._update_interval_seconds = max(5, int(os.environ.get("UPDATE_INTERVAL_SECONDS", "5")))
+        update_interval_minutes = os.environ.get("UPDATE_INTERVAL_MINUTES")
+        if update_interval_minutes is not None:
+            try:
+                update_interval_seconds = int(float(update_interval_minutes) * 60)
+            except Exception:
+                update_interval_seconds = 60
+        else:
+            update_interval_seconds = int(os.environ.get("UPDATE_INTERVAL_SECONDS", "60"))
+        self._update_interval_seconds = max(60, update_interval_seconds)
         self._udp_port = int(os.environ.get("UDP_SERVER_PORT", "7171"))
         self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}, Initial IP={self.get_public_ip()}")
 
@@ -219,17 +227,11 @@ class UDPClient:
                 ip_changed = ip_value != self._last_observed_public_ip
                 self._last_observed_public_ip = ip_value
                 dns_match = dns_global_ip is not None and ip_value == dns_global_ip
-                if dns_match:
-                    self._last_upload_success_ip = ip_value
                 should_send = True
-                action = "send_update"
+                action = "send_update_periodic"
                 if ip_value == "0.0.0.0":
                     should_send = False
                     action = "skip_invalid_ip"
-                elif ip_value == self._last_upload_success_ip and dns_match:
-                    action = "heartbeat_dns_fallback_same" if ip_source == "dns_fallback" else "heartbeat_same_ip_dns_ok"
-                elif dns_match:
-                    action = "heartbeat_dns_fallback" if ip_source == "dns_fallback" else "heartbeat_dns_already_ok"
                 sent_servers = []
                 dns_failed_servers = []
                 send_failed_servers = []
