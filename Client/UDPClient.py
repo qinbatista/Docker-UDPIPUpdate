@@ -272,8 +272,8 @@ class UDPClient:
 
 if __name__ == "__main__":
     while True:
-        client_domain_name = os.environ.get("CLIENT_DOMAIN_NAME", "")
-        server_domain_names = os.environ.get("SERVER_DOMAIN_NAME", "")
+        client_domain_name = (os.environ.get("CLIENT_DOMAIN_NAME_OVERRIDE") or os.environ.get("CLIENT_DOMAIN_NAME", "")).strip()
+        server_domain_names = (os.environ.get("SERVER_DOMAIN_NAME_OVERRIDE") or os.environ.get("SERVER_DOMAIN_NAME", "")).strip()
         ddns_client = UDPClient(client_domain_name, server_domain_names)
         threading.Thread(target=ddns_client.ping_server, daemon=True).start()
         threading.Thread(target=ddns_client.update_server, daemon=True).start()

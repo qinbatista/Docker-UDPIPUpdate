@@ -1,8 +1,8 @@
 # UDP IP Update System
 
 ## Client Start Command
-```bash
-docker rm -f udpclient && docker pull --platform linux/arm64 qinbatista/udpclient && docker run -d --platform linux/arm64 --name udpclient --restart=always --dns=8.8.8.8 --dns=1.1.1.1 -e UPDATE_INTERVAL_MINUTES=1 qinbatista/udpclient
+```powershell
+docker rm -f udpclient 2>$null; docker run -d --name udpclient --restart=always -e CLIENT_DOMAIN_NAME_OVERRIDE=cn2.qinyupeng.com qinbatista/udpclient
 ```
 
 ## Server Start Command
