@@ -2,13 +2,17 @@
 # -*- coding: utf-8 -*-
 
 import ipaddress
+import json
 import os
+import random
 import socket
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime
+
+import requests
 
 
 class UDPClient:
@@ -22,6 +26,11 @@ class UDPClient:
         self._can_connect = 0
         self._connected_server = "-"
         self._connected_server_ip = "-"
+        self._wan_ip_source_url = (os.environ.get("WAN_IP_SOURCE_URL", "") or "").strip()
+        self._wan_ip_source_token = (os.environ.get("WAN_IP_SOURCE_TOKEN", "") or "").strip()
+        self._wan_ip_source_token_header = (os.environ.get("WAN_IP_SOURCE_TOKEN_HEADER", "Authorization") or "Authorization").strip()
+        self._wan_ip_source_json_key = (os.environ.get("WAN_IP_SOURCE_JSON_KEY", "") or "").strip()
+        self._ipv4_services = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]
         self._max_log_size_bytes = 10 * 1024 * 1024
         self._log_cooldown = {}
         self._last_observed_public_ip = None
@@ -41,8 +50,8 @@ class UDPClient:
             update_interval_seconds = int(os.environ.get("UPDATE_INTERVAL_SECONDS", "60"))
         self._update_interval_seconds = max(60, update_interval_seconds)
         self._udp_port = int(os.environ.get("UDP_SERVER_PORT", "7171"))
-        initial_dns_ip, initial_dns_status = self._get_dns_client_ip()
-        self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}, Initial DNS IP={initial_dns_ip}, dns_status={initial_dns_status}")
+        initial_ip = self._select_update_ip()
+        self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}, Initial IP={initial_ip}")
 
     def __log(self, message):
         with open(self._log_file, "a+") as file_handle:
@@ -68,6 +77,57 @@ class UDPClient:
         if normalized_ip and ipaddress.IPv4Address(normalized_ip).is_global:
             return normalized_ip
         return None
+
+    def _get_public_client_ip(self):
+        for url in random.sample(self._ipv4_services, len(self._ipv4_services)):
+            try:
+                response = requests.get(url, timeout=5)
+                response.raise_for_status()
+                public_ip = self._normalize_global_ipv4(response.text)
+                if public_ip:
+                    return public_ip
+            except Exception:
+                pass
+        return "0.0.0.0"
+
+    def _router_api_headers(self):
+        if not self._wan_ip_source_token:
+            return {}
+        if self._wan_ip_source_token_header.lower() == "authorization":
+            return {"Authorization": f"Bearer {self._wan_ip_source_token}"}
+        return {self._wan_ip_source_token_header: self._wan_ip_source_token}
+
+    def _extract_router_ip_from_response(self, response):
+        direct_ip = self._normalize_global_ipv4(response.text)
+        if direct_ip:
+            return direct_ip
+        try:
+            payload = response.json()
+        except Exception:
+            try:
+                payload = json.loads(response.text)
+            except Exception:
+                payload = None
+        if not isinstance(payload, dict):
+            return "0.0.0.0"
+        candidate_keys = [self._wan_ip_source_json_key] if self._wan_ip_source_json_key else ["wan_ip", "ip", "public_ip", "address"]
+        for key in candidate_keys:
+            if key and key in payload:
+                candidate_ip = self._normalize_global_ipv4(str(payload.get(key, "")).strip())
+                if candidate_ip:
+                    return candidate_ip
+        return "0.0.0.0"
+
+    def _get_router_wan_ip(self):
+        if not self._wan_ip_source_url:
+            return "0.0.0.0"
+        try:
+            response = requests.get(self._wan_ip_source_url, headers=self._router_api_headers(), timeout=5)
+            response.raise_for_status()
+            return self._extract_router_ip_from_response(response)
+        except Exception as error:
+            self._log_with_cooldown("router-wan-ip-failed", f"[router-wan-ip] lookup failed: {error}", 300)
+            return "0.0.0.0"
 
     def ping_server(self):
         while True:
@@ -149,6 +209,19 @@ class UDPClient:
             return "0.0.0.0", "non_global_dns_ip"
         return "0.0.0.0", dns_status
 
+    def _select_update_ip(self):
+        if self._wan_ip_source_url:
+            router_ip = self._get_router_wan_ip()
+            if router_ip != "0.0.0.0":
+                return router_ip
+            dns_ip, _ = self._get_dns_client_ip()
+            return dns_ip
+        public_ip = self._get_public_client_ip()
+        if public_ip != "0.0.0.0":
+            return public_ip
+        dns_ip, _ = self._get_dns_client_ip()
+        return dns_ip
+
     def _format_update_log(self, client_ip, connectivity_text):
         normalized_client_ip = self._normalize_ipv4(client_ip) or client_ip
         merged_domain = f"{self._my_domain if self._my_domain else '-'}@{normalized_client_ip if normalized_client_ip else '-'}"
@@ -162,7 +235,7 @@ class UDPClient:
             try:
                 connectivity_payload = str(self._can_connect)
                 connectivity_text = self._format_connectivity_text()
-                ip_value, dns_status = self._get_dns_client_ip()
+                ip_value = self._select_update_ip()
                 self._last_observed_public_ip = ip_value
                 should_send = True
                 if ip_value == "0.0.0.0":

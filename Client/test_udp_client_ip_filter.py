@@ -10,9 +10,24 @@ except ModuleNotFoundError:
 
 
 class TestUDPClientDNSIP(unittest.TestCase):
+    class MockResponse:
+        def __init__(self, text, status_code=200, payload=None):
+            self.text = text
+            self.status_code = status_code
+            self._payload = payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise Exception(f"http {self.status_code}")
+
+        def json(self):
+            if self._payload is not None:
+                return self._payload
+            raise ValueError("no json payload")
+
     def _build_client(self):
         log_file = tempfile.NamedTemporaryFile(delete=False).name
-        with patch.object(UDPClient, "_get_dns_client_ip", return_value=("0.0.0.0", "fail")):
+        with patch.object(UDPClient, "_select_update_ip", return_value="0.0.0.0"):
             client = UDPClient("client.example.com", "server.example.com", log_file=log_file)
         return client, log_file
 
@@ -31,6 +46,9 @@ class TestUDPClientDNSIP(unittest.TestCase):
     def _getaddrinfo_patch_target(self):
         return f"{UDPClient.__module__}.socket.getaddrinfo"
 
+    def _requests_get_patch_target(self):
+        return f"{UDPClient.__module__}.requests.get"
+
     def test_get_dns_client_ip_returns_global_dns_ip(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
@@ -48,6 +66,52 @@ class TestUDPClientDNSIP(unittest.TestCase):
         self._remember_temp(log_file)
         with patch(self._getaddrinfo_patch_target(), side_effect=Exception("dns down")):
             self.assertEqual(client._get_dns_client_ip(), ("0.0.0.0", "fail"))
+
+    def test_select_update_ip_prefers_public_ip(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        with patch.object(client, "_get_public_client_ip", return_value="113.250.202.113"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")):
+            self.assertEqual(client._select_update_ip(), "113.250.202.113")
+
+    def test_select_update_ip_falls_back_to_dns_ip(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        with patch.object(client, "_get_public_client_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")):
+            self.assertEqual(client._select_update_ip(), "14.110.98.236")
+
+    def test_get_public_client_ip_returns_zero_when_all_lookups_fail(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        with patch(self._requests_get_patch_target(), side_effect=Exception("network down")):
+            self.assertEqual(client._get_public_client_ip(), "0.0.0.0")
+
+    def test_get_router_wan_ip_from_plain_text(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._wan_ip_source_url = "http://router.local/wan-ip"
+        with patch(self._requests_get_patch_target(), return_value=self.MockResponse("113.250.202.113")):
+            self.assertEqual(client._get_router_wan_ip(), "113.250.202.113")
+
+    def test_get_router_wan_ip_from_json_key(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._wan_ip_source_url = "http://router.local/wan-ip"
+        with patch(self._requests_get_patch_target(), return_value=self.MockResponse("{\"wan_ip\":\"113.250.202.113\"}", payload={"wan_ip": "113.250.202.113"})):
+            self.assertEqual(client._get_router_wan_ip(), "113.250.202.113")
+
+    def test_select_update_ip_prefers_router_when_configured(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._wan_ip_source_url = "http://router.local/wan-ip"
+        with patch.object(client, "_get_router_wan_ip", return_value="113.250.202.113"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")):
+            self.assertEqual(client._select_update_ip(), "113.250.202.113")
+
+    def test_select_update_ip_router_fallback_to_dns_when_router_unavailable(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._wan_ip_source_url = "http://router.local/wan-ip"
+        with patch.object(client, "_get_router_wan_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")), patch.object(client, "_get_public_client_ip", return_value="99.60.18.107"):
+            self.assertEqual(client._select_update_ip(), "14.110.98.236")
 
     def test_connectivity_turns_off_after_three_failures(self):
         client, log_file = self._build_client()
