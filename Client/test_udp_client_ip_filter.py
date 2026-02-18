@@ -75,55 +75,60 @@ class TestUDPClientDNSIP(unittest.TestCase):
     def test_select_update_ip_prefers_public_ip(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        with patch.object(client, "_get_public_client_ip", return_value=self.PUBLIC_IP), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
+        with patch.object(client, "_get_public_client_ip", return_value=(self.PUBLIC_IP, "https://api.ipify.org")), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
             self.assertEqual(client._select_update_ip(), self.PUBLIC_IP)
+            self.assertEqual(client._last_ip_source, "https://api.ipify.org")
 
     def test_select_update_ip_falls_back_to_dns_ip(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        with patch.object(client, "_get_public_client_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
+        with patch.object(client, "_get_public_client_ip", return_value=("0.0.0.0", "public:none")), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
             self.assertEqual(client._select_update_ip(), self.DNS_IP)
+            self.assertEqual(client._last_ip_source, "dns:client.example.com")
 
     def test_get_public_client_ip_returns_zero_when_all_lookups_fail(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         with patch(self._requests_get_patch_target(), side_effect=Exception("network down")):
-            self.assertEqual(client._get_public_client_ip(), "0.0.0.0")
+            self.assertEqual(client._get_public_client_ip(), ("0.0.0.0", "public:none"))
 
     def test_get_router_wan_ip_from_plain_text(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
         with patch(self._requests_get_patch_target(), return_value=self.MockResponse(self.ROUTER_IP)):
-            self.assertEqual(client._get_router_wan_ip(), self.ROUTER_IP)
+            self.assertEqual(client._get_router_wan_ip(), (self.ROUTER_IP, "http://router.local/wan-ip"))
 
     def test_get_router_wan_ip_from_json_key(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
         with patch(self._requests_get_patch_target(), return_value=self.MockResponse("{\"wan_ip\":\"9.9.9.9\"}", payload={"wan_ip": self.ROUTER_IP})):
-            self.assertEqual(client._get_router_wan_ip(), self.ROUTER_IP)
+            self.assertEqual(client._get_router_wan_ip(), (self.ROUTER_IP, "http://router.local/wan-ip"))
 
     def test_select_update_ip_prefers_router_when_configured(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
-        with patch.object(client, "_get_router_wan_ip", return_value=self.ROUTER_IP), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
+        with patch.object(client, "_get_router_wan_ip", return_value=(self.ROUTER_IP, "http://router.local/wan-ip")), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
             self.assertEqual(client._select_update_ip(), self.ROUTER_IP)
+            self.assertEqual(client._last_ip_source, "router:http://router.local/wan-ip")
 
     def test_select_update_ip_router_fallback_to_public_when_router_unavailable(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
-        with patch.object(client, "_get_router_wan_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")), patch.object(client, "_get_public_client_ip", return_value=self.PUBLIC_FALLBACK_IP):
+        with patch.object(client, "_get_router_wan_ip", return_value=("0.0.0.0", "http://router.local/wan-ip")), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")), patch.object(client, "_get_public_client_ip", return_value=(self.PUBLIC_FALLBACK_IP, "https://ifconfig.me/ip")):
             self.assertEqual(client._select_update_ip(), self.PUBLIC_FALLBACK_IP)
+            self.assertEqual(client._last_ip_source, "https://ifconfig.me/ip")
 
     def test_select_update_ip_router_then_public_then_dns(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
-        with patch.object(client, "_get_router_wan_ip", return_value="0.0.0.0"), patch.object(client, "_get_public_client_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
+        with patch.object(client, "_get_router_wan_ip", return_value=("0.0.0.0", "http://router.local/wan-ip")), patch.object(client, "_get_public_client_ip", return_value=("0.0.0.0", "public:none")), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
             self.assertEqual(client._select_update_ip(), self.DNS_IP)
+            self.assertEqual(client._last_ip_source, "dns:client.example.com")
 
     def test_default_public_ip_services_match_shadowrocket_direct_rules(self):
         client, log_file = self._build_client()
@@ -171,8 +176,8 @@ class TestUDPClientDNSIP(unittest.TestCase):
     def test_update_log_has_no_send_field(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        message = client._format_update_log(self.DNS_IP, "connected(timov4.qinyupeng.com@54.249.229.136)")
-        self.assertEqual(message, f"[client={self.DNS_IP}] [domain=client.example.com@{self.DNS_IP}] [connectivity=connected(timov4.qinyupeng.com@54.249.229.136)]||")
+        message = client._format_update_log(self.DNS_IP, "connected(timov4.qinyupeng.com@54.249.229.136)", "https://api.ipify.org")
+        self.assertEqual(message, f"[client={self.DNS_IP}(source=https://api.ipify.org)] [domain=client.example.com@{self.DNS_IP}] [connectivity=connected(timov4.qinyupeng.com@54.249.229.136)]||")
 
 
 if __name__ == "__main__":

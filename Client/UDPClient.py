@@ -35,6 +35,7 @@ class UDPClient:
         self._log_cooldown = {}
         self._last_observed_public_ip = None
         self._last_upload_success_ip = None
+        self._last_ip_source = "-"
         self._connect_fail_count = 0
         self._connect_fail_threshold = max(1, int(os.environ.get("CONNECTIVITY_FAIL_THRESHOLD", "3")))
         self._disconnect_start_time = None
@@ -50,8 +51,6 @@ class UDPClient:
             update_interval_seconds = int(os.environ.get("UPDATE_INTERVAL_SECONDS", "60"))
         self._update_interval_seconds = max(60, update_interval_seconds)
         self._udp_port = int(os.environ.get("UDP_SERVER_PORT", "7171"))
-        initial_ip = self._select_update_ip()
-        self.__log(f"client_domain_name={client_domain_name}, server_domain_names={server_domain_names}, Initial IP={initial_ip}")
 
     def __log(self, message):
         with open(self._log_file, "a+") as file_handle:
@@ -93,10 +92,10 @@ class UDPClient:
                 response.raise_for_status()
                 public_ip = self._normalize_global_ipv4(response.text)
                 if public_ip:
-                    return public_ip
+                    return public_ip, url
             except Exception:
                 pass
-        return "0.0.0.0"
+        return "0.0.0.0", "public:none"
 
     def _router_api_headers(self):
         if not self._wan_ip_source_token:
@@ -128,14 +127,17 @@ class UDPClient:
 
     def _get_router_wan_ip(self):
         if not self._wan_ip_source_url:
-            return "0.0.0.0"
+            return "0.0.0.0", "router:none"
         try:
             response = requests.get(self._wan_ip_source_url, headers=self._router_api_headers(), timeout=5)
             response.raise_for_status()
-            return self._extract_router_ip_from_response(response)
+            router_ip = self._extract_router_ip_from_response(response)
+            if router_ip != "0.0.0.0":
+                return router_ip, self._wan_ip_source_url
+            return "0.0.0.0", self._wan_ip_source_url
         except Exception as error:
             self._log_with_cooldown("router-wan-ip-failed", f"[router-wan-ip] lookup failed: {error}", 300)
-            return "0.0.0.0"
+            return "0.0.0.0", self._wan_ip_source_url
 
     def ping_server(self):
         while True:
@@ -164,10 +166,6 @@ class UDPClient:
             else:
                 stable_server = "-"
                 stable_server_ip = "-"
-            if stable_reachable != self._can_connect:
-                before_state = "connected" if self._can_connect == 1 else "disconnected"
-                after_state = "connected" if stable_reachable == 1 else "disconnected"
-                self.__log(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}][ping] Connectivity status changed: {before_state} -> {after_state}, target={stable_server}@{stable_server_ip}, fail_count={self._connect_fail_count}/{self._connect_fail_threshold}")
             self._can_connect = stable_reachable
             self._connected_server = stable_server
             self._connected_server_ip = stable_server_ip
@@ -219,24 +217,29 @@ class UDPClient:
 
     def _select_update_ip(self):
         if self._wan_ip_source_url:
-            router_ip = self._get_router_wan_ip()
+            router_ip, router_source = self._get_router_wan_ip()
             if router_ip != "0.0.0.0":
+                self._last_ip_source = f"router:{router_source}"
                 return router_ip
-            public_ip = self._get_public_client_ip()
+            public_ip, public_source = self._get_public_client_ip()
             if public_ip != "0.0.0.0":
+                self._last_ip_source = public_source
                 return public_ip
             dns_ip, _ = self._get_dns_client_ip()
+            self._last_ip_source = f"dns:{self._my_domain if self._my_domain else '-'}"
             return dns_ip
-        public_ip = self._get_public_client_ip()
+        public_ip, public_source = self._get_public_client_ip()
         if public_ip != "0.0.0.0":
+            self._last_ip_source = public_source
             return public_ip
         dns_ip, _ = self._get_dns_client_ip()
+        self._last_ip_source = f"dns:{self._my_domain if self._my_domain else '-'}"
         return dns_ip
 
-    def _format_update_log(self, client_ip, connectivity_text):
+    def _format_update_log(self, client_ip, connectivity_text, source_text):
         normalized_client_ip = self._normalize_ipv4(client_ip) or client_ip
         merged_domain = f"{self._my_domain if self._my_domain else '-'}@{normalized_client_ip if normalized_client_ip else '-'}"
-        return f"[client={normalized_client_ip if normalized_client_ip else '-'}] [domain={merged_domain}] [connectivity={connectivity_text}]||"
+        return f"[client={normalized_client_ip if normalized_client_ip else '-'}(source={source_text if source_text else '-'})] [domain={merged_domain}] [connectivity={connectivity_text}]||"
 
     def update_server(self):
         udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -266,7 +269,7 @@ class UDPClient:
                             pass
                     if sent_servers:
                         self._last_upload_success_ip = ip_value
-                self.__log(f"[{ts}] {self._format_update_log(ip_value, connectivity_text)}")
+                self.__log(f"[{ts}] {self._format_update_log(ip_value, connectivity_text, self._last_ip_source)}")
             except Exception as error:
                 self.__log(f"[{ts}][update] cycle_error={error}")
             time.sleep(self._update_interval_seconds)
