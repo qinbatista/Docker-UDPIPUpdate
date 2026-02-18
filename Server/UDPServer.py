@@ -274,7 +274,7 @@ class UDPServer:
                         case "v4":
                             base_log = f"client={sender_ip} domain={domain_name} protocol={protocol} reported_ip={reported_ip} connectivity={connectivity}"
                             update_ip = self._select_update_ipv4(reported_ip)
-                            decision_key = f"dns-update:{sender_ip}:{domain_name}"
+                            decision_key = f"dns-update:{domain_name}"
                             if not update_ip:
                                 self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=invalid_reported_non_global_ip update_ip=-", self._receive_log_interval_seconds)
                                 continue
