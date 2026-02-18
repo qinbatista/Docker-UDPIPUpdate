@@ -133,7 +133,15 @@ class TestUDPClientDNSIP(unittest.TestCase):
     def test_default_public_ip_services_match_shadowrocket_direct_rules(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        self.assertEqual(client._ipv4_services, ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com", "https://api.ip.sb/ip"])
+        self.assertEqual(client._ipv4_services, ["https://ifconfig.me/ip", "https://icanhazip.com", "https://api.ip.sb/ip"])
+
+    def test_public_ip_services_rotate_round_robin(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._ipv4_services = ["u1", "u2", "u3"]
+        self.assertEqual(client._public_ip_services_round_robin(), ["u1", "u2", "u3"])
+        self.assertEqual(client._public_ip_services_round_robin(), ["u2", "u3", "u1"])
+        self.assertEqual(client._public_ip_services_round_robin(), ["u3", "u1", "u2"])
 
     def test_connectivity_turns_off_after_three_failures(self):
         client, log_file = self._build_client()

@@ -4,7 +4,6 @@
 import ipaddress
 import json
 import os
-import random
 import socket
 import subprocess
 import sys
@@ -31,6 +30,7 @@ class UDPClient:
         self._wan_ip_source_token_header = (os.environ.get("WAN_IP_SOURCE_TOKEN_HEADER", "Authorization") or "Authorization").strip()
         self._wan_ip_source_json_key = (os.environ.get("WAN_IP_SOURCE_JSON_KEY", "") or "").strip()
         self._ipv4_services = self._load_public_ip_services()
+        self._public_ip_service_index = 0
         self._max_log_size_bytes = 10 * 1024 * 1024
         self._log_cooldown = {}
         self._last_observed_public_ip = None
@@ -83,10 +83,18 @@ class UDPClient:
             service_list = [value.strip() for value in service_text.split(",") if value.strip()]
             if service_list:
                 return service_list
-        return ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com", "https://api.ip.sb/ip"]
+        return ["https://ifconfig.me/ip", "https://icanhazip.com", "https://api.ip.sb/ip"]
+
+    def _public_ip_services_round_robin(self):
+        if not self._ipv4_services:
+            return []
+        start_index = self._public_ip_service_index % len(self._ipv4_services)
+        ordered_services = self._ipv4_services[start_index:] + self._ipv4_services[:start_index]
+        self._public_ip_service_index = (self._public_ip_service_index + 1) % len(self._ipv4_services)
+        return ordered_services
 
     def _get_public_client_ip(self):
-        for url in random.sample(self._ipv4_services, len(self._ipv4_services)):
+        for url in self._public_ip_services_round_robin():
             try:
                 response = requests.get(url, timeout=5)
                 response.raise_for_status()
