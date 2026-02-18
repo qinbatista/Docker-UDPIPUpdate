@@ -1,6 +1,5 @@
 import os
 import tempfile
-import time
 import unittest
 from unittest.mock import patch
 
@@ -10,20 +9,10 @@ except ModuleNotFoundError:
     from UDPClient import UDPClient
 
 
-class MockResponse:
-    def __init__(self, text, status_code=200):
-        self.text = text
-        self.status_code = status_code
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise Exception(f"http {self.status_code}")
-
-
-class TestUDPClientIPFilter(unittest.TestCase):
+class TestUDPClientDNSIP(unittest.TestCase):
     def _build_client(self):
         log_file = tempfile.NamedTemporaryFile(delete=False).name
-        with patch.object(UDPClient, "get_public_ip", return_value="0.0.0.0"):
+        with patch.object(UDPClient, "_get_dns_client_ip", return_value=("0.0.0.0", "fail")):
             client = UDPClient("client.example.com", "server.example.com", log_file=log_file)
         return client, log_file
 
@@ -39,65 +28,76 @@ class TestUDPClientIPFilter(unittest.TestCase):
             self._temp_files = []
         self._temp_files.append(file_name)
 
-    def _requests_patch_target(self):
-        return f"{UDPClient.__module__}.requests.get"
+    def _getaddrinfo_patch_target(self):
+        return f"{UDPClient.__module__}.socket.getaddrinfo"
 
-    def test_rejects_reserved_benchmark_ip(self):
+    def test_get_dns_client_ip_returns_global_dns_ip(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
+        with patch(self._getaddrinfo_patch_target(), return_value=[(None, None, None, None, ("14.110.98.236", 0))]):
+            self.assertEqual(client._get_dns_client_ip(), ("14.110.98.236", "ok"))
 
-        def fake_get(url, timeout=5):
-            if url in client._ipv4_services:
-                return MockResponse("198.18.2.112\n")
-            raise Exception(f"unexpected url: {url}")
-
-        with patch(self._requests_patch_target(), side_effect=fake_get):
-            self.assertEqual(client.get_public_ip(), "0.0.0.0")
-
-    def test_rejects_vpn_ip(self):
+    def test_get_dns_client_ip_returns_non_global_status(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        client._vpn_ip_map = {"1.1.1.1": "timov4.qinyupeng.com"}
-        client._vpn_ips_last_refresh = time.time()
+        with patch(self._getaddrinfo_patch_target(), return_value=[(None, None, None, None, ("10.0.0.8", 0))]):
+            self.assertEqual(client._get_dns_client_ip(), ("0.0.0.0", "non_global_dns_ip"))
 
-        def fake_get(url, timeout=5):
-            if url in client._ipv4_services:
-                return MockResponse("1.1.1.1")
-            raise Exception(f"unexpected url: {url}")
-
-        with patch(self._requests_patch_target(), side_effect=fake_get):
-            self.assertEqual(client.get_public_ip(), "0.0.0.0")
-
-    def test_accepts_cn_public_ip(self):
+    def test_get_dns_client_ip_returns_fail_on_resolve_error(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        client._vpn_ips_last_refresh = time.time()
+        with patch(self._getaddrinfo_patch_target(), side_effect=Exception("dns down")):
+            self.assertEqual(client._get_dns_client_ip(), ("0.0.0.0", "fail"))
 
-        def fake_get(url, timeout=5):
-            if url in client._ipv4_services:
-                return MockResponse("36.112.0.1")
-            if "ipinfo.io/36.112.0.1/country" in url:
-                return MockResponse("CN")
-            return MockResponse("CN")
-
-        with patch(self._requests_patch_target(), side_effect=fake_get):
-            self.assertEqual(client.get_public_ip(), "36.112.0.1")
-
-    def test_fallback_to_last_good_when_current_ip_non_cn(self):
+    def test_connectivity_turns_off_after_three_failures(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        client._last_good_public_ip = "36.112.0.1"
-        client._vpn_ips_last_refresh = time.time()
+        client._can_connect = 1
+        client._connect_fail_threshold = 3
+        self.assertEqual(client._next_connectivity_state(0), 1)
+        self.assertEqual(client._next_connectivity_state(0), 1)
+        self.assertEqual(client._next_connectivity_state(0), 0)
+        self.assertEqual(client._connect_fail_count, 3)
 
-        def fake_get(url, timeout=5):
-            if url in client._ipv4_services:
-                return MockResponse("8.8.8.8")
-            if "ipinfo.io/8.8.8.8/country" in url:
-                return MockResponse("US")
-            return MockResponse("US")
+    def test_connectivity_failure_count_resets_on_success(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._can_connect = 1
+        client._connect_fail_threshold = 3
+        client._next_connectivity_state(0)
+        client._next_connectivity_state(0)
+        self.assertEqual(client._connect_fail_count, 2)
+        self.assertEqual(client._next_connectivity_state(1), 1)
+        self.assertEqual(client._connect_fail_count, 0)
 
-        with patch(self._requests_patch_target(), side_effect=fake_get):
-            self.assertEqual(client.get_public_ip(), "36.112.0.1")
+    def test_connectivity_text_shows_disconnect_progress(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._can_connect = 0
+        client._disconnect_window_seconds = 300
+        client._disconnect_start_time = 1000
+        with patch(f"{UDPClient.__module__}.time.time", return_value=1005):
+            self.assertEqual(client._format_connectivity_text(), "disconnected(5/300)")
+
+    def test_connectivity_text_connected_shows_target(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._can_connect = 1
+        client._connected_server = "timov4.qinyupeng.com"
+        client._connected_server_ip = "54.249.229.136"
+        self.assertEqual(client._format_connectivity_text(), "connected(timov4.qinyupeng.com@54.249.229.136)")
+
+    def test_update_log_hides_send_when_success(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        message = client._format_update_log("14.110.98.236", "connected(timov4.qinyupeng.com@54.249.229.136)", "success")
+        self.assertEqual(message, "[client=14.110.98.236] [domain=client.example.com@14.110.98.236] [connectivity=connected(timov4.qinyupeng.com@54.249.229.136)]||")
+
+    def test_update_log_keeps_send_when_failed(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        message = client._format_update_log("14.110.98.236", "disconnected(5/300)", "1/3 failed")
+        self.assertEqual(message, "[client=14.110.98.236] [domain=client.example.com@14.110.98.236] [connectivity=disconnected(5/300)] [send=1/3 failed]||")
 
 
 if __name__ == "__main__":

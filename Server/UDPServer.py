@@ -46,6 +46,8 @@ class UDPServer:
         self.__light_sail = LightSail()
         self.excluded_domains = ["la.qinyupeng.com", "timov4.qinyupeng.com"]
         self.excluded_ips_cache = {"ips": set(), "last_updated": 0}
+        self._server_domain_name = (os.environ.get("SERVER_DOMAIN_NAME", "") or "").strip()
+        self._server_ip_snapshot = "-"
 
     def log(self, msg):
         ts = datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S")
@@ -123,6 +125,13 @@ class UDPServer:
 
     def _select_update_ipv4(self, reported_ip):
         return self._normalize_global_ipv4(reported_ip)
+
+    def _format_client_server_update_log(self, _client_ip, client_location_ip, domain_name, domain_ip, action, reason):
+        normalized_location_ip = self._normalize_ipv4(client_location_ip) or client_location_ip
+        merged_domain = f"{domain_name if domain_name else '-'}@{domain_ip if domain_ip else '-'}"
+        merged_server = f"{self._server_domain_name if self._server_domain_name else '-'}@{self._server_ip_snapshot if self._server_ip_snapshot else '-'}"
+        merged_action = f"{action}:{reason}"
+        return f"[client={normalized_location_ip if normalized_location_ip else '-'}] [domain={merged_domain}] -> [server={merged_server}] [action={merged_action}]||"
 
     def _request_ip(self, url):
         try:
@@ -272,22 +281,25 @@ class UDPServer:
 
                     match protocol:
                         case "v4":
-                            base_log = f"client={sender_ip} domain={domain_name} protocol={protocol} reported_ip={reported_ip} connectivity={connectivity}"
                             update_ip = self._select_update_ipv4(reported_ip)
                             decision_key = f"dns-update:{domain_name}"
                             if not update_ip:
-                                self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=invalid_reported_non_global_ip update_ip=-", self._receive_log_interval_seconds)
+                                invalid_msg = self._format_client_server_update_log(sender_ip, reported_ip, domain_name, "-", "not_updated", "invalid_reported_non_global_ip")
+                                self._log_periodic_state(decision_key, invalid_msg, self._receive_log_interval_seconds)
                                 continue
 
-                            dns_match, dns_ip, dns_status = self._domain_points_to_ip(domain_name, update_ip)
+                            dns_match, dns_ip, _ = self._domain_points_to_ip(domain_name, update_ip)
                             if dns_match:
-                                self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=dns_already_matches update_ip={update_ip} dns_ip={dns_ip if dns_ip else '-'} dns_status={dns_status}", self._receive_log_interval_seconds)
+                                no_update_msg = self._format_client_server_update_log(sender_ip, reported_ip, domain_name, dns_ip, "not_updated", "dns_already_matches")
+                                self._log_periodic_state(decision_key, no_update_msg, self._receive_log_interval_seconds)
                             else:
                                 updated = self.update_client_ip_via_lambda(update_ip, connectivity, domain_name=domain_name)
                                 if updated:
-                                    self._log_periodic_state(decision_key, f"{base_log} action=updated reason=dns_not_match_update_sent update_ip={update_ip} dns_ip={dns_ip if dns_ip else '-'} dns_status={dns_status}", self._receive_log_interval_seconds)
+                                    update_msg = self._format_client_server_update_log(sender_ip, reported_ip, domain_name, dns_ip, "updated", "dns_not_match_update_sent")
+                                    self._log_periodic_state(decision_key, update_msg, self._receive_log_interval_seconds)
                                 else:
-                                    self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=lambda_call_failed update_ip={update_ip} dns_ip={dns_ip if dns_ip else '-'} dns_status={dns_status}", self._receive_log_interval_seconds)
+                                    failed_msg = self._format_client_server_update_log(sender_ip, reported_ip, domain_name, dns_ip, "not_updated", "lambda_call_failed")
+                                    self._log_periodic_state(decision_key, failed_msg, self._receive_log_interval_seconds)
                             if connectivity == "0":
                                 if domain_name not in self.connectivity_0_start_time:
                                     self.connectivity_0_start_time[domain_name] = time.time()
@@ -301,7 +313,7 @@ class UDPServer:
                         case "v6":
                             pass  # No need to log or handle
                         case _:
-                            unknown_log_msg = f"client={sender_ip} domain={domain_name} protocol={protocol} reported_ip={reported_ip} connectivity={connectivity} action=not_updated reason=unknown_protocol update_ip=-"
+                            unknown_log_msg = self._format_client_server_update_log(sender_ip, reported_ip, domain_name, "-", "not_updated", "unknown_protocol")
                             self._log_periodic_state(f"unknown-protocol:{sender_ip}:{domain_name}", unknown_log_msg, self._receive_log_interval_seconds)
                 else:
                     invalid_log_msg = f"Invalid message format from {sender_ip}:{sender_port}: {msg}"
@@ -322,11 +334,12 @@ class UDPServer:
 
     def ip_monitor_loop(self):
         last_ip = None
-        server_domain_name = os.environ.get("SERVER_DOMAIN_NAME", "")
+        server_domain_name = self._server_domain_name
         while True:
             current_ip = self.get_ipv4()
             update_ip = self._normalize_global_ipv4(current_ip)
             if update_ip:
+                self._server_ip_snapshot = update_ip
                 if last_ip is None:
                     ip_reason = "initial"
                 elif update_ip != last_ip:
@@ -341,7 +354,8 @@ class UDPServer:
                     updated = self.update_client_ip_via_lambda(update_ip, "1", domain_name=server_domain_name)
                     action = "updated" if updated else "not_updated"
                     reason = "dns_not_match_update_sent" if updated else "lambda_call_failed"
-                self.log(f"server_domain={server_domain_name if server_domain_name else '-'} ip={update_ip} action={action} reason={reason} ip_reason={ip_reason} dns_ip={dns_ip if dns_ip else '-'} dns_status={dns_status}")
+                if action != "not_updated" or reason != "dns_already_matches":
+                    self.log(f"[server domain={server_domain_name if server_domain_name else '-'} ip={update_ip}] [action={action}] [reason={reason}] [ip_reason={ip_reason}] [domain_ip={dns_ip if dns_ip else '-'}] [dns_status={dns_status}]")
                 last_ip = update_ip
             else:
                 self._log_with_cooldown("server-monitor-invalid-ip", f"server_domain={server_domain_name if server_domain_name else '-'} ip={current_ip} action=not_updated reason=invalid_non_global_ip", self._ip_monitor_interval_seconds)
