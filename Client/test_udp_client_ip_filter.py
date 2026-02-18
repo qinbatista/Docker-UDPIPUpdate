@@ -87,17 +87,11 @@ class TestUDPClientDNSIP(unittest.TestCase):
         client._connected_server_ip = "54.249.229.136"
         self.assertEqual(client._format_connectivity_text(), "connected(timov4.qinyupeng.com@54.249.229.136)")
 
-    def test_update_log_hides_send_when_success(self):
+    def test_update_log_has_no_send_field(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        message = client._format_update_log("14.110.98.236", "connected(timov4.qinyupeng.com@54.249.229.136)", "success")
+        message = client._format_update_log("14.110.98.236", "connected(timov4.qinyupeng.com@54.249.229.136)")
         self.assertEqual(message, "[client=14.110.98.236] [domain=client.example.com@14.110.98.236] [connectivity=connected(timov4.qinyupeng.com@54.249.229.136)]||")
-
-    def test_update_log_keeps_send_when_failed(self):
-        client, log_file = self._build_client()
-        self._remember_temp(log_file)
-        message = client._format_update_log("14.110.98.236", "disconnected(5/300)", "1/3 failed")
-        self.assertEqual(message, "[client=14.110.98.236] [domain=client.example.com@14.110.98.236] [connectivity=disconnected(5/300)] [send=1/3 failed]||")
 
 
 if __name__ == "__main__":

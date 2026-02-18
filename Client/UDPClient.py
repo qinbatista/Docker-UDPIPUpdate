@@ -149,13 +149,10 @@ class UDPClient:
             return "0.0.0.0", "non_global_dns_ip"
         return "0.0.0.0", dns_status
 
-    def _format_update_log(self, client_ip, connectivity_text, send_status):
+    def _format_update_log(self, client_ip, connectivity_text):
         normalized_client_ip = self._normalize_ipv4(client_ip) or client_ip
         merged_domain = f"{self._my_domain if self._my_domain else '-'}@{normalized_client_ip if normalized_client_ip else '-'}"
-        base_log = f"[client={normalized_client_ip if normalized_client_ip else '-'}] [domain={merged_domain}] [connectivity={connectivity_text}]"
-        if send_status == "success":
-            return f"{base_log}||"
-        return f"{base_log} [send={send_status}]||"
+        return f"[client={normalized_client_ip if normalized_client_ip else '-'}] [domain={merged_domain}] [connectivity={connectivity_text}]||"
 
     def update_server(self):
         udp_client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -185,18 +182,7 @@ class UDPClient:
                             pass
                     if sent_servers:
                         self._last_upload_success_ip = ip_value
-                total_servers = len(self._target_servers)
-                failed_servers = total_servers - len(sent_servers)
-                if should_send:
-                    if total_servers == 0:
-                        send_status = "failed 0/0"
-                    elif failed_servers == 0:
-                        send_status = "success"
-                    else:
-                        send_status = f"{failed_servers}/{total_servers} failed"
-                else:
-                    send_status = f"skipped:{dns_status}"
-                self.__log(f"[{ts}] {self._format_update_log(ip_value, connectivity_text, send_status)}")
+                self.__log(f"[{ts}] {self._format_update_log(ip_value, connectivity_text)}")
             except Exception as error:
                 self.__log(f"[{ts}][update] cycle_error={error}")
             time.sleep(self._update_interval_seconds)
