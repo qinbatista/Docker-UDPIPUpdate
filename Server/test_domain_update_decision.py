@@ -67,7 +67,7 @@ class TestDomainUpdateDecision(unittest.TestCase):
     def test_select_update_ipv4_uses_reported_ip_only(self, mock_get_ipv6, mock_get_ipv4, mock_lightsail):
         server = UDPServer(log_file=self.log_file)
         try:
-            self.assertEqual(server._select_update_ipv4("14.110.98.236"), "14.110.98.236")
+            self.assertEqual(server._select_update_ipv4("8.8.4.4"), "8.8.4.4")
             self.assertIsNone(server._select_update_ipv4("0.0.0.0"))
             self.assertIsNone(server._select_update_ipv4("not-an-ip"))
         finally:

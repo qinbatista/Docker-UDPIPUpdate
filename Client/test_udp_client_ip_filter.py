@@ -10,6 +10,11 @@ except ModuleNotFoundError:
 
 
 class TestUDPClientDNSIP(unittest.TestCase):
+    DNS_IP = "8.8.4.4"
+    PUBLIC_IP = "1.1.1.1"
+    ROUTER_IP = "9.9.9.9"
+    PUBLIC_FALLBACK_IP = "208.67.222.222"
+
     class MockResponse:
         def __init__(self, text, status_code=200, payload=None):
             self.text = text
@@ -52,13 +57,13 @@ class TestUDPClientDNSIP(unittest.TestCase):
     def test_get_dns_client_ip_returns_global_dns_ip(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        with patch(self._getaddrinfo_patch_target(), return_value=[(None, None, None, None, ("14.110.98.236", 0))]):
-            self.assertEqual(client._get_dns_client_ip(), ("14.110.98.236", "ok"))
+        with patch(self._getaddrinfo_patch_target(), return_value=[(None, None, None, None, (self.DNS_IP, 0))]):
+            self.assertEqual(client._get_dns_client_ip(), (self.DNS_IP, "ok"))
 
     def test_get_dns_client_ip_returns_non_global_status(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        with patch(self._getaddrinfo_patch_target(), return_value=[(None, None, None, None, ("10.0.0.8", 0))]):
+        with patch(self._getaddrinfo_patch_target(), return_value=[(None, None, None, None, ("198.18.2.112", 0))]):
             self.assertEqual(client._get_dns_client_ip(), ("0.0.0.0", "non_global_dns_ip"))
 
     def test_get_dns_client_ip_returns_fail_on_resolve_error(self):
@@ -70,14 +75,14 @@ class TestUDPClientDNSIP(unittest.TestCase):
     def test_select_update_ip_prefers_public_ip(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        with patch.object(client, "_get_public_client_ip", return_value="113.250.202.113"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")):
-            self.assertEqual(client._select_update_ip(), "113.250.202.113")
+        with patch.object(client, "_get_public_client_ip", return_value=self.PUBLIC_IP), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
+            self.assertEqual(client._select_update_ip(), self.PUBLIC_IP)
 
     def test_select_update_ip_falls_back_to_dns_ip(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        with patch.object(client, "_get_public_client_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")):
-            self.assertEqual(client._select_update_ip(), "14.110.98.236")
+        with patch.object(client, "_get_public_client_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
+            self.assertEqual(client._select_update_ip(), self.DNS_IP)
 
     def test_get_public_client_ip_returns_zero_when_all_lookups_fail(self):
         client, log_file = self._build_client()
@@ -89,36 +94,36 @@ class TestUDPClientDNSIP(unittest.TestCase):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
-        with patch(self._requests_get_patch_target(), return_value=self.MockResponse("113.250.202.113")):
-            self.assertEqual(client._get_router_wan_ip(), "113.250.202.113")
+        with patch(self._requests_get_patch_target(), return_value=self.MockResponse(self.ROUTER_IP)):
+            self.assertEqual(client._get_router_wan_ip(), self.ROUTER_IP)
 
     def test_get_router_wan_ip_from_json_key(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
-        with patch(self._requests_get_patch_target(), return_value=self.MockResponse("{\"wan_ip\":\"113.250.202.113\"}", payload={"wan_ip": "113.250.202.113"})):
-            self.assertEqual(client._get_router_wan_ip(), "113.250.202.113")
+        with patch(self._requests_get_patch_target(), return_value=self.MockResponse("{\"wan_ip\":\"9.9.9.9\"}", payload={"wan_ip": self.ROUTER_IP})):
+            self.assertEqual(client._get_router_wan_ip(), self.ROUTER_IP)
 
     def test_select_update_ip_prefers_router_when_configured(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
-        with patch.object(client, "_get_router_wan_ip", return_value="113.250.202.113"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")):
-            self.assertEqual(client._select_update_ip(), "113.250.202.113")
+        with patch.object(client, "_get_router_wan_ip", return_value=self.ROUTER_IP), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
+            self.assertEqual(client._select_update_ip(), self.ROUTER_IP)
 
     def test_select_update_ip_router_fallback_to_public_when_router_unavailable(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
-        with patch.object(client, "_get_router_wan_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")), patch.object(client, "_get_public_client_ip", return_value="99.60.18.107"):
-            self.assertEqual(client._select_update_ip(), "99.60.18.107")
+        with patch.object(client, "_get_router_wan_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")), patch.object(client, "_get_public_client_ip", return_value=self.PUBLIC_FALLBACK_IP):
+            self.assertEqual(client._select_update_ip(), self.PUBLIC_FALLBACK_IP)
 
     def test_select_update_ip_router_then_public_then_dns(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
-        with patch.object(client, "_get_router_wan_ip", return_value="0.0.0.0"), patch.object(client, "_get_public_client_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")):
-            self.assertEqual(client._select_update_ip(), "14.110.98.236")
+        with patch.object(client, "_get_router_wan_ip", return_value="0.0.0.0"), patch.object(client, "_get_public_client_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
+            self.assertEqual(client._select_update_ip(), self.DNS_IP)
 
     def test_default_public_ip_services_match_shadowrocket_direct_rules(self):
         client, log_file = self._build_client()
@@ -166,8 +171,8 @@ class TestUDPClientDNSIP(unittest.TestCase):
     def test_update_log_has_no_send_field(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
-        message = client._format_update_log("14.110.98.236", "connected(timov4.qinyupeng.com@54.249.229.136)")
-        self.assertEqual(message, "[client=14.110.98.236] [domain=client.example.com@14.110.98.236] [connectivity=connected(timov4.qinyupeng.com@54.249.229.136)]||")
+        message = client._format_update_log(self.DNS_IP, "connected(timov4.qinyupeng.com@54.249.229.136)")
+        self.assertEqual(message, f"[client={self.DNS_IP}] [domain=client.example.com@{self.DNS_IP}] [connectivity=connected(timov4.qinyupeng.com@54.249.229.136)]||")
 
 
 if __name__ == "__main__":

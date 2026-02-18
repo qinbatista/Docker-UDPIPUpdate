@@ -18,9 +18,9 @@ class TestIPExclusion(unittest.TestCase):
         # Setup mock behavior
         def side_effect(domain):
             if domain == "la.qinyupeng.com":
-                return "10.0.0.1"
+                return "8.8.8.8"
             elif domain == "timov4.qinyupeng.com":
-                return "10.0.0.2"
+                return "1.1.1.1"
             return "0.0.0.0"
 
         mock_gethostbyname.side_effect = side_effect
@@ -32,21 +32,21 @@ class TestIPExclusion(unittest.TestCase):
         excluded_ips = server._get_excluded_ips()
         print(f"Excluded IPs found: {excluded_ips}")
 
-        self.assertIn("10.0.0.1", excluded_ips)
-        self.assertIn("10.0.0.2", excluded_ips)
+        self.assertIn("8.8.8.8", excluded_ips)
+        self.assertIn("1.1.1.1", excluded_ips)
         self.assertEqual(len(excluded_ips), 2)
 
         # Verify cache usage (calling again shouldn't trigger side_effect if within 5 mins,
         # but mocking time is complex, so just checking logic works first)
 
         # Test simulated receive loop check
-        sender_ip = "10.0.0.1"
+        sender_ip = "8.8.8.8"
         if sender_ip in excluded_ips:
             print(f"Correctly identified {sender_ip} as excluded.")
         else:
             self.fail(f"Failed to identify {sender_ip} as excluded.")
 
-        sender_ip_allowed = "192.168.1.1"
+        sender_ip_allowed = "9.9.9.9"
         if sender_ip_allowed not in excluded_ips:
             print(f"Correctly identified {sender_ip_allowed} as allowed.")
         else:
