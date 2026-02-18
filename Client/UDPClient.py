@@ -29,6 +29,7 @@ class UDPClient:
         self._wan_ip_source_token = (os.environ.get("WAN_IP_SOURCE_TOKEN", "") or "").strip()
         self._wan_ip_source_token_header = (os.environ.get("WAN_IP_SOURCE_TOKEN_HEADER", "Authorization") or "Authorization").strip()
         self._wan_ip_source_json_key = (os.environ.get("WAN_IP_SOURCE_JSON_KEY", "") or "").strip()
+        self._wan_ip_source_required = (os.environ.get("WAN_IP_SOURCE_REQUIRED", "0") or "0").strip().lower() in {"1", "true", "yes"}
         self._ipv4_services = self._load_public_ip_services()
         self._public_ip_service_index = 0
         self._max_log_size_bytes = 10 * 1024 * 1024
@@ -229,6 +230,9 @@ class UDPClient:
             if router_ip != "0.0.0.0":
                 self._last_ip_source = f"router:{router_source}"
                 return router_ip
+            if self._wan_ip_source_required:
+                self._last_ip_source = f"router_failed:{router_source}"
+                return "0.0.0.0"
             public_ip, public_source = self._get_public_client_ip()
             if public_ip != "0.0.0.0":
                 self._last_ip_source = public_source

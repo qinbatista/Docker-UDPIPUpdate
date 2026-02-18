@@ -130,6 +130,15 @@ class TestUDPClientDNSIP(unittest.TestCase):
             self.assertEqual(client._select_update_ip(), self.DNS_IP)
             self.assertEqual(client._last_ip_source, "dns:client.example.com")
 
+    def test_select_update_ip_router_required_blocks_public_fallback(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._wan_ip_source_url = "http://router.local/wan-ip"
+        client._wan_ip_source_required = True
+        with patch.object(client, "_get_router_wan_ip", return_value=("0.0.0.0", "http://router.local/wan-ip")), patch.object(client, "_get_public_client_ip", return_value=(self.PUBLIC_FALLBACK_IP, "https://ifconfig.me/ip")), patch.object(client, "_get_dns_client_ip", return_value=(self.DNS_IP, "ok")):
+            self.assertEqual(client._select_update_ip(), "0.0.0.0")
+            self.assertEqual(client._last_ip_source, "router_failed:http://router.local/wan-ip")
+
     def test_default_public_ip_services_match_shadowrocket_direct_rules(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
