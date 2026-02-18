@@ -30,7 +30,7 @@ class UDPClient:
         self._wan_ip_source_token = (os.environ.get("WAN_IP_SOURCE_TOKEN", "") or "").strip()
         self._wan_ip_source_token_header = (os.environ.get("WAN_IP_SOURCE_TOKEN_HEADER", "Authorization") or "Authorization").strip()
         self._wan_ip_source_json_key = (os.environ.get("WAN_IP_SOURCE_JSON_KEY", "") or "").strip()
-        self._ipv4_services = ["https://checkip.amazonaws.com", "https://api.ipify.org", "https://ifconfig.me/ip", "https://ipinfo.io/ip"]
+        self._ipv4_services = self._load_public_ip_services()
         self._max_log_size_bytes = 10 * 1024 * 1024
         self._log_cooldown = {}
         self._last_observed_public_ip = None
@@ -77,6 +77,14 @@ class UDPClient:
         if normalized_ip and ipaddress.IPv4Address(normalized_ip).is_global:
             return normalized_ip
         return None
+
+    def _load_public_ip_services(self):
+        service_text = (os.environ.get("PUBLIC_IP_CHECK_URLS", "") or "").strip()
+        if service_text:
+            service_list = [value.strip() for value in service_text.split(",") if value.strip()]
+            if service_list:
+                return service_list
+        return ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com", "https://api.ip.sb/ip"]
 
     def _get_public_client_ip(self):
         for url in random.sample(self._ipv4_services, len(self._ipv4_services)):
@@ -214,6 +222,9 @@ class UDPClient:
             router_ip = self._get_router_wan_ip()
             if router_ip != "0.0.0.0":
                 return router_ip
+            public_ip = self._get_public_client_ip()
+            if public_ip != "0.0.0.0":
+                return public_ip
             dns_ip, _ = self._get_dns_client_ip()
             return dns_ip
         public_ip = self._get_public_client_ip()

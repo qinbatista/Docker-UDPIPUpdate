@@ -106,12 +106,24 @@ class TestUDPClientDNSIP(unittest.TestCase):
         with patch.object(client, "_get_router_wan_ip", return_value="113.250.202.113"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")):
             self.assertEqual(client._select_update_ip(), "113.250.202.113")
 
-    def test_select_update_ip_router_fallback_to_dns_when_router_unavailable(self):
+    def test_select_update_ip_router_fallback_to_public_when_router_unavailable(self):
         client, log_file = self._build_client()
         self._remember_temp(log_file)
         client._wan_ip_source_url = "http://router.local/wan-ip"
         with patch.object(client, "_get_router_wan_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")), patch.object(client, "_get_public_client_ip", return_value="99.60.18.107"):
+            self.assertEqual(client._select_update_ip(), "99.60.18.107")
+
+    def test_select_update_ip_router_then_public_then_dns(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        client._wan_ip_source_url = "http://router.local/wan-ip"
+        with patch.object(client, "_get_router_wan_ip", return_value="0.0.0.0"), patch.object(client, "_get_public_client_ip", return_value="0.0.0.0"), patch.object(client, "_get_dns_client_ip", return_value=("14.110.98.236", "ok")):
             self.assertEqual(client._select_update_ip(), "14.110.98.236")
+
+    def test_default_public_ip_services_match_shadowrocket_direct_rules(self):
+        client, log_file = self._build_client()
+        self._remember_temp(log_file)
+        self.assertEqual(client._ipv4_services, ["https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com", "https://api.ip.sb/ip"])
 
     def test_connectivity_turns_off_after_three_failures(self):
         client, log_file = self._build_client()
