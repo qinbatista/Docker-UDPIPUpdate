@@ -52,6 +52,5 @@ class TestIPExclusion(unittest.TestCase):
         else:
             self.fail(f"Failed to allow {sender_ip_allowed}.")
 
-
 if __name__ == "__main__":
     unittest.main()

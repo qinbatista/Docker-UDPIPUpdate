@@ -121,6 +121,9 @@ class UDPServer:
             return False, dns_ip, dns_status
         return dns_ip == normalized_target, dns_ip, "match" if dns_ip == normalized_target else "mismatch"
 
+    def _select_update_ipv4(self, reported_ip):
+        return self._normalize_global_ipv4(reported_ip)
+
     def _request_ip(self, url):
         try:
             r = requests.get(url, timeout=5)
@@ -270,14 +273,10 @@ class UDPServer:
                     match protocol:
                         case "v4":
                             base_log = f"client={sender_ip} domain={domain_name} protocol={protocol} reported_ip={reported_ip} connectivity={connectivity}"
-                            update_ip = self._normalize_global_ipv4(reported_ip) or self._normalize_global_ipv4(sender_ip)
+                            update_ip = self._select_update_ipv4(reported_ip)
                             decision_key = f"dns-update:{sender_ip}:{domain_name}"
                             if not update_ip:
-                                self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=invalid_non_global_ip update_ip=-", self._receive_log_interval_seconds)
-                                continue
-                            excluded_ips = self._get_excluded_ips()
-                            if sender_ip in excluded_ips or update_ip in excluded_ips:
-                                self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=excluded_ip update_ip={update_ip}", self._receive_log_interval_seconds)
+                                self._log_periodic_state(decision_key, f"{base_log} action=not_updated reason=invalid_reported_non_global_ip update_ip=-", self._receive_log_interval_seconds)
                                 continue
 
                             dns_match, dns_ip, dns_status = self._domain_points_to_ip(domain_name, update_ip)
