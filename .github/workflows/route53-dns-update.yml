@@ -22,20 +22,27 @@ jobs:
     environment: BuildEnv
 
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_KEY }}
-          aws-secret-access-key: ${{ secrets.AWS_ACCESS }}
-          aws-region: us-west-2
-
       - name: Upsert A record
         env:
+          AWS_KEY_VALUE: ${{ secrets.AWS_KEY }}
+          AWS_ACCESS_VALUE: ${{ secrets.AWS_ACCESS }}
           ZONE_NAME: ${{ inputs.zone_name }}
           DOMAIN_NAME: ${{ inputs.domain_name }}
           IPV4: ${{ inputs.ipv4 }}
         run: |
           set -euo pipefail
+
+          configure_aws() {
+            export AWS_ACCESS_KEY_ID="$1"
+            export AWS_SECRET_ACCESS_KEY="$2"
+            export AWS_DEFAULT_REGION="us-west-2"
+          }
+
+          configure_aws "$AWS_KEY_VALUE" "$AWS_ACCESS_VALUE"
+          if ! aws sts get-caller-identity >/dev/null 2>&1; then
+            configure_aws "$AWS_ACCESS_VALUE" "$AWS_KEY_VALUE"
+            aws sts get-caller-identity >/dev/null
+          fi
 
           zone_name="${ZONE_NAME%.}."
           domain_name="${DOMAIN_NAME%.}."
