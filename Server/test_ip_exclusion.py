@@ -19,7 +19,7 @@ class TestIPExclusion(unittest.TestCase):
         def side_effect(domain):
             if domain == "la.qinyupeng.com":
                 return "8.8.8.8"
-            elif domain == "timov4.qinyupeng.com":
+            elif domain == "timov4.qyp.life":
                 return "1.1.1.1"
             return "0.0.0.0"
 

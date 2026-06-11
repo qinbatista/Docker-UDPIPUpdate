@@ -7,7 +7,7 @@ docker rm -f udpclient 2>$null; docker run -d --name udpclient --restart=always 
 
 ## Server Start Command
 ```bash
-docker rm -f udpserver && docker pull --platform linux/arm64 qinbatista/udpserver && docker run -d --platform linux/arm64 --name udpserver --restart=always -p 7171:7171/udp -e IP_MONITOR_INTERVAL_MINUTES=1 qinbatista/udpserver
+docker rm -f udpserver && docker pull --platform linux/arm64 qinbatista/udpserver && docker run -d --platform linux/arm64 --name udpserver --restart=always -p 7171:7171/udp -e IP_MONITOR_INTERVAL_MINUTES=1 -e SERVER_DOMAIN_NAME=timov4.qyp.life qinbatista/udpserver
 ```
 
 The client now sends UDP IP updates every interval (default: 1 minute), and the server checks local DNS first: if the domain already points to that IP it skips updating, otherwise it keeps uploading until DNS matches.

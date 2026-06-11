@@ -44,7 +44,7 @@ class UDPServer:
         self._ipv6_services = ["https://api6.ipify.org", "https://ifconfig.co/ip", "https://ipv6.icanhazip.com", "https://ip6.seeip.org"]
         self.log(f"Initial IPv4={self.get_ipv4()}, Initial IPv6={self.get_ipv6()}")
         self.__light_sail = LightSail()
-        self.excluded_domains = ["la.qinyupeng.com", "timov4.qinyupeng.com"]
+        self.excluded_domains = ["la.qinyupeng.com", "timov4.qyp.life"]
         self.excluded_ips_cache = {"ips": set(), "last_updated": 0}
         self._server_domain_name = (os.environ.get("SERVER_DOMAIN_NAME", "") or "").strip()
         self._server_ip_snapshot = "-"
