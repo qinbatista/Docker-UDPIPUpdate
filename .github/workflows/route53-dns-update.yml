@@ -1,0 +1,61 @@
+name: Route53 DNS Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      zone_name:
+        description: Route 53 hosted zone name
+        required: true
+        default: qyp.life
+      domain_name:
+        description: DNS record name
+        required: true
+        default: timov4.qyp.life
+      ipv4:
+        description: IPv4 address for the A record
+        required: true
+        default: 54.249.229.136
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment: BuildEnv
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS }}
+          aws-region: us-west-2
+
+      - name: Upsert A record
+        env:
+          ZONE_NAME: ${{ inputs.zone_name }}
+          DOMAIN_NAME: ${{ inputs.domain_name }}
+          IPV4: ${{ inputs.ipv4 }}
+        run: |
+          set -euo pipefail
+
+          zone_name="${ZONE_NAME%.}."
+          domain_name="${DOMAIN_NAME%.}."
+          zone_id="$(aws route53 list-hosted-zones-by-name --dns-name "$zone_name" --query "HostedZones[?Name=='$zone_name'].Id | [0]" --output text)"
+
+          if [ "$zone_id" = "None" ] || [ -z "$zone_id" ]; then
+            echo "Hosted zone not found: $zone_name" >&2
+            exit 1
+          fi
+
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id "$zone_id" \
+            --change-batch "{
+              \"Changes\": [{
+                \"Action\": \"UPSERT\",
+                \"ResourceRecordSet\": {
+                  \"Name\": \"$domain_name\",
+                  \"Type\": \"A\",
+                  \"TTL\": 60,
+                  \"ResourceRecords\": [{\"Value\": \"$IPV4\"}]
+                }
+              }]
+            }"
